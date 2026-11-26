@@ -40,6 +40,12 @@ namespace ALTRun.Services
         private static DateTime _hiddenSince = DateTime.MinValue;
         private static DateTime _lastTrimAt = DateTime.MinValue;
 
+        /// <summary>
+        /// 托盘右键菜单是 Popup，不在 Application.Windows 中。打开期间必须把它计入"有界面在交互"，
+        /// 否则主窗口隐藏时 10 秒轮询会误判为完全空闲而裁剪工作集，菜单后续操作出现缺页卡顿。
+        /// </summary>
+        public static bool IsTrayMenuOpen { get; set; }
+
         /// <summary>挂上主窗口并开始轮询。重复调用无副作用。</summary>
         public static void Start(Window owner)
         {
@@ -62,6 +68,7 @@ namespace ALTRun.Services
             _owner = null;
             _hiddenSince = DateTime.MinValue;
             _lastTrimAt = DateTime.MinValue;
+            IsTrayMenuOpen = false;
         }
 
         private static void OnTick(object? sender, EventArgs e)
@@ -96,6 +103,7 @@ namespace ALTRun.Services
 
         private static bool IsAnyWindowVisible(Window owner)
         {
+            if (IsTrayMenuOpen) return true;
             if (owner.IsVisible) return true;
 
             var app = System.Windows.Application.Current;

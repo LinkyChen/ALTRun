@@ -49,7 +49,7 @@ namespace ALTRun.Views
                 !string.IsNullOrWhiteSpace(SearchBox.Text) &&
                 !SearchBox.Text.TrimStart().StartsWith(">") &&
                 !SearchBox.Text.TrimStart().StartsWith("=") &&
-                ResultListBox.SelectedItem is ShortCutItem)
+                GetSelectedResultItem() is ShortCutItem)
             {
                 bool runAsAdmin = (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control;
                 ExecuteSelectedItem(runAsAdmin);
@@ -59,7 +59,7 @@ namespace ALTRun.Views
 
             if (e.Key == Key.D && (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control)
             {
-                if (ResultListBox.SelectedItem is ShortCutItem selected)
+                if (GetSelectedResultItem() is ShortCutItem selected && !IsSpecialCommandItem(selected))
                 {
                     OpenItemDirectory(selected);
                     e.Handled = true;
@@ -69,7 +69,7 @@ namespace ALTRun.Views
 
             if (e.Key == Key.Tab)
             {
-                if (ResultListBox.SelectedItem is ShortCutItem selected)
+                if (GetSelectedResultItem() is ShortCutItem selected)
                 {
                     SearchBox.Text = selected.ShortCut + " ";
                     SearchBox.CaretIndex = SearchBox.Text.Length;
@@ -80,20 +80,20 @@ namespace ALTRun.Views
 
             if (e.Key == Key.Down)
             {
-                if (ResultListBox.SelectedIndex < ResultListBox.Items.Count - 1)
+                int current = _selectedResultIndex >= 0 ? _selectedResultIndex : ResultListBox.SelectedIndex;
+                if (current < ResultListBox.Items.Count - 1)
                 {
-                    ResultListBox.SelectedIndex++;
-                    ResultListBox.ScrollIntoView(ResultListBox.SelectedItem);
+                    SetSelectedResult(current + 1);
                 }
                 e.Handled = true;
                 return;
             }
             if (e.Key == Key.Up)
             {
-                if (ResultListBox.SelectedIndex > 0)
+                int current = _selectedResultIndex >= 0 ? _selectedResultIndex : ResultListBox.SelectedIndex;
+                if (current > 0)
                 {
-                    ResultListBox.SelectedIndex--;
-                    ResultListBox.ScrollIntoView(ResultListBox.SelectedItem);
+                    SetSelectedResult(current - 1);
                 }
                 e.Handled = true;
                 return;
@@ -113,26 +113,21 @@ namespace ALTRun.Views
             if (actualKey == Key.ImeProcessed) actualKey = e.ImeProcessedKey;
 
             int digit = -1;
-            char digitChar = '\0';
             if (actualKey >= Key.D1 && actualKey <= Key.D9)
             {
                 digit = actualKey - Key.D1 + 1;
-                digitChar = (char)('0' + digit);
             }
             else if (actualKey == Key.D0)
             {
                 digit = 10;
-                digitChar = '0';
             }
             else if (actualKey >= Key.NumPad1 && actualKey <= Key.NumPad9)
             {
                 digit = actualKey - Key.NumPad1 + 1;
-                digitChar = (char)('0' + digit);
             }
             else if (actualKey == Key.NumPad0)
             {
                 digit = 10;
-                digitChar = '0';
             }
 
             if (digit > 0)
@@ -147,7 +142,7 @@ namespace ALTRun.Views
                     int targetIndex = digit - 1;
                     if (targetIndex >= 0 && targetIndex < _currentResult.Items.Count)
                     {
-                        ResultListBox.SelectedIndex = targetIndex;
+                        SetSelectedResult(targetIndex);
                         bool runAsAdmin = hasCtrl;
                         ExecuteSelectedItem(runAsAdmin);
                         e.Handled = true;
@@ -155,36 +150,40 @@ namespace ALTRun.Views
                     }
                 }
 
-                // 2. 单数字键智能判定:
-                // 如果输入的数字在快捷方式名称/快捷键中有匹配，则显示匹配项；若无任何匹配，则作为序号直达运行对应项
+                // 2. 单数字键直达:
+                // 旧版对所有情况都用 "追加数字后 HasAnyMatch 无匹配才直达" 判定，
+                // 但空输入时 predictedQuery 只有一位数字，而配置里大量项含数字（Win10/7zip/日期等），
+                // HasAnyMatch 几乎恒为 true，导致呼出后按数字从不直达。
+                // 修正：空输入时列表是 Top N，数字键一律按序号直达；已有输入时保留原智能判定，
+                // 使 win10、7zip 这类含数字关键词仍可正常输入。
                 if (Keyboard.Modifiers == ModifierKeys.None)
                 {
                     string currentText = SearchBox.SelectionLength == SearchBox.Text.Length ? string.Empty : SearchBox.Text;
 
-                    // 算式模式(=)和终端命令行模式(>)豁免，保证用户能正常输入数字算式与命令
+                    // 算式模式和终端命令行模式豁免，保证用户能正常输入数字算式与命令
                     if (!currentText.StartsWith(">") && !currentText.StartsWith("="))
                     {
-                        // 预测如果把当前数字追加到搜索词中
-                        string predictedQuery = currentText + digitChar;
-
-                        // 检索整个快捷方式库是否包含或匹配该数字组合 (如 12306, 1hshutdown, c2 等)
-                        var predictedResult = SearchEngine.Search(predictedQuery, App.Config.Settings.ShortCuts);
-
-                        // 如果有匹配的快捷方式: 放行输入到搜索框中展示匹配项
-                        if (predictedResult.Items.Count > 0)
+                        bool shouldDirectRun;
+                        if (string.IsNullOrEmpty(currentText))
                         {
-                            return;
+                            // 空输入（Top N 列表）：数字键即序号，直接运行对应项
+                            shouldDirectRun = true;
+                        }
+                        else
+                        {
+                            // 已有输入：追加数字后若仍能匹配快捷词则放行输入，否则视为序号直达
+                            string predictedQuery = currentText + digit.ToString();
+                            shouldDirectRun = !SearchEngine.HasAnyMatch(predictedQuery, App.Config.Settings.ShortCuts);
                         }
 
-                        // 如果没有任何快捷方式匹配该数字组合: 100% 为序号直达操作
                         int targetIndex = digit - 1;
-                        if (targetIndex >= 0 && targetIndex < _currentResult.Items.Count)
+                        if (shouldDirectRun && targetIndex >= 0 && targetIndex < _currentResult.Items.Count)
                         {
-                            ResultListBox.SelectedIndex = targetIndex;
+                            SetSelectedResult(targetIndex);
                             ExecuteSelectedItem(false);
                             e.Handled = true;
-                            return;
                         }
+                        // 其余情况放行数字进入搜索框（继续拼含数字的关键词）
                     }
                 }
             }
@@ -216,50 +215,84 @@ namespace ALTRun.Views
             }
         }
 
+        private static string NormalizeDropPath(string? path)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return string.Empty;
+            string expanded = Environment.ExpandEnvironmentVariables(path.Trim().Trim('"'));
+            try
+            {
+                return Path.GetFullPath(expanded);
+            }
+            catch
+            {
+                return expanded;
+            }
+        }
+
         private void Window_Drop(object sender, System.Windows.DragEventArgs e)
         {
-            if (e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop))
+            if (!e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop)) return;
+
+            if (e.Data.GetData(System.Windows.DataFormats.FileDrop) is not string[] files || files.Length == 0) return;
+
+            var shortcuts = App.Config.Settings.ShortCuts;
+            var usedKeys = new HashSet<string>(
+                shortcuts.Where(s => !string.IsNullOrWhiteSpace(s.ShortCut)).Select(s => s.ShortCut),
+                StringComparer.OrdinalIgnoreCase);
+            var usedPaths = new HashSet<string>(
+                shortcuts.Select(s => NormalizeDropPath(s.CommandLine)),
+                StringComparer.OrdinalIgnoreCase);
+
+            foreach (var file in files)
             {
-                string[]? files = e.Data.GetData(System.Windows.DataFormats.FileDrop) as string[];
-                if (files != null && files.Length > 0)
+                string fileName = Path.GetFileName(file);
+                if (fileName.Equals("ShortCutList.txt", StringComparison.OrdinalIgnoreCase) ||
+                    fileName.EndsWith(".ini", StringComparison.OrdinalIgnoreCase))
                 {
-                    foreach (var file in files)
+                    var imported = App.Config.ImportFromLegacyFile(file)
+                        .Where(item => usedPaths.Add(NormalizeDropPath(item.CommandLine)))
+                        .ToList();
+                    if (imported.Count > 0)
                     {
-                        string fileName = Path.GetFileName(file);
-                        if (fileName.Equals("ShortCutList.txt", StringComparison.OrdinalIgnoreCase) ||
-                            fileName.EndsWith(".ini", StringComparison.OrdinalIgnoreCase))
+                        shortcuts.AddRange(imported);
+                        foreach (var item in imported)
                         {
-                            var imported = App.Config.ImportFromLegacyFile(file);
-                            if (imported.Count > 0)
-                            {
-                                App.Config.Settings.ShortCuts.AddRange(imported);
-                                App.Config.RefreshPinyinCache();
-                                App.Config.Save();
-                                PerformSearch();
-                                MessageBox.Show(string.Format(AppStrings.ImportSuccessFormat, imported.Count), AppStrings.AppName, MessageBoxButton.OK, MessageBoxImage.Information);
-                            }
-                            continue;
+                            if (!string.IsNullOrWhiteSpace(item.ShortCut)) usedKeys.Add(item.ShortCut);
+                            App.Config.RefreshPinyinCache(item);
                         }
-
-                        string baseName = Path.GetFileNameWithoutExtension(file);
-                        string shortCutKey = baseName.Length >= 4 ? baseName.Substring(0, 4).ToLowerInvariant() : baseName.ToLowerInvariant();
-
-                        var newItem = new ShortCutItem
-                        {
-                            ShortCut = shortCutKey,
-                            Name = baseName,
-                            CommandLine = file,
-                            Freq = 10
-                        };
-
-                        App.Config.Settings.ShortCuts.Insert(0, newItem);
+                        App.Config.Save();
+                        PerformSearch();
+                        MessageBox.Show(string.Format(AppStrings.ImportSuccessFormat, imported.Count), AppStrings.AppName, MessageBoxButton.OK, MessageBoxImage.Information);
                     }
-
-                    App.Config.RefreshPinyinCache();
-                    App.Config.Save();
-                    PerformSearch();
+                    continue;
                 }
+
+                // 重复拖入同一目标时只提升频次，不再新增条目
+                string normalized = NormalizeDropPath(file);
+                if (!usedPaths.Add(normalized))
+                {
+                    var duplicate = shortcuts.FirstOrDefault(s => string.Equals(NormalizeDropPath(s.CommandLine), normalized, StringComparison.OrdinalIgnoreCase));
+                    if (duplicate != null) duplicate.Freq++;
+                    continue;
+                }
+
+                string baseName = Path.GetFileNameWithoutExtension(file);
+                // 复用扫描器的智能快捷词（含中文拼音首字母与冲突递增），不再简单取前 4 个字符
+                string shortCutKey = AppScannerService.GenerateSmartShortcut(baseName, usedKeys);
+
+                var newItem = new ShortCutItem
+                {
+                    ShortCut = shortCutKey,
+                    Name = baseName,
+                    CommandLine = file,
+                    Freq = 0
+                };
+                App.Config.RefreshPinyinCache(newItem);
+                shortcuts.Insert(0, newItem);
             }
+
+            App.Config.Save();
+            PerformSearch();
         }
 
     }

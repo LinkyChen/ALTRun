@@ -14,6 +14,14 @@ namespace ALTRun.Services
     public static class WindowHelper
     {
         private const uint MONITOR_DEFAULTTONEAREST = 2;
+        private const int MDT_EFFECTIVE_DPI = 0;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct POINT
+        {
+            public int X;
+            public int Y;
+        }
 
         [StructLayout(LayoutKind.Sequential)]
         private struct RECT
@@ -37,8 +45,19 @@ namespace ALTRun.Services
         private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);
 
         [DllImport("user32.dll")]
+        private static extern IntPtr MonitorFromPoint(POINT pt, uint dwFlags);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetCursorPos(out POINT lpPoint);
+
+        [DllImport("user32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
+
+        // Win8.1+ 提供；按显示器取有效 DPI，避免跨屏不同缩放下用窗口自身 DPI 换算出错
+        [DllImport("shcore.dll")]
+        private static extern int GetDpiForMonitor(IntPtr hMonitor, int dpiType, out uint dpiX, out uint dpiY);
 
         public static void FitToWorkArea(Window window, double margin = 16)
         {
@@ -72,7 +91,7 @@ namespace ALTRun.Services
         /// <summary>
         /// 取窗口所在显示器的工作区（DIP 单位）。窗口尚无句柄或查询失败时退回主屏工作区。
         /// </summary>
-        private static Rect GetWorkArea(Window window)
+        public static Rect GetWorkArea(Window window)
         {
             try
             {
@@ -80,23 +99,9 @@ namespace ALTRun.Services
                 if (hwnd != IntPtr.Zero)
                 {
                     IntPtr monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-                    if (monitor != IntPtr.Zero)
+                    if (monitor != IntPtr.Zero && TryGetWorkArea(monitor, window, out Rect area))
                     {
-                        var info = new MONITORINFO { cbSize = Marshal.SizeOf(typeof(MONITORINFO)) };
-                        if (GetMonitorInfo(monitor, ref info))
-                        {
-                            // GetMonitorInfo 返回物理像素，WPF 的 Window.Left/Top/Width/Height 是 DIP，
-                            // 需按该窗口当前的 DPI 缩放换算，否则 125% / 150% 缩放下会偏移。
-                            DpiScale dpi = VisualTreeHelper.GetDpi(window);
-                            double scaleX = dpi.DpiScaleX > 0 ? dpi.DpiScaleX : 1.0;
-                            double scaleY = dpi.DpiScaleY > 0 ? dpi.DpiScaleY : 1.0;
-
-                            return new Rect(
-                                info.rcWork.Left / scaleX,
-                                info.rcWork.Top / scaleY,
-                                (info.rcWork.Right - info.rcWork.Left) / scaleX,
-                                (info.rcWork.Bottom - info.rcWork.Top) / scaleY);
-                        }
+                        return area;
                     }
                 }
             }
@@ -106,6 +111,80 @@ namespace ALTRun.Services
             }
 
             return SystemParameters.WorkArea;
+        }
+
+        /// <summary>
+        /// 取鼠标当前所在显示器的工作区（DIP 单位）。全局呼出时用这个定位，
+        /// 保证鼠标在副屏时搜索框出现在副屏而不是主屏；查询失败时退回主屏工作区。
+        /// </summary>
+        public static Rect GetWorkAreaAtCursor(Window window)
+        {
+            try
+            {
+                if (GetCursorPos(out POINT cursor))
+                {
+                    IntPtr monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
+                    if (monitor != IntPtr.Zero && TryGetWorkArea(monitor, window, out Rect area))
+                    {
+                        return area;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write($"[ALTRun] WindowHelper 获取鼠标所在显示器工作区失败，回退主屏: {ex.Message}");
+            }
+
+            return SystemParameters.WorkArea;
+        }
+
+        private static bool TryGetWorkArea(IntPtr monitor, Window window, out Rect area)
+        {
+            area = Rect.Empty;
+            var info = new MONITORINFO { cbSize = Marshal.SizeOf(typeof(MONITORINFO)) };
+            if (!GetMonitorInfo(monitor, ref info)) return false;
+
+            // GetMonitorInfo 返回物理像素，WPF 的 Window.Left/Top/Width/Height 是 DIP，
+            // 需按显示器自身 DPI 换算；跨屏不同缩放时不能用窗口旧的 DPI。
+            double scaleX = 1.0;
+            double scaleY = 1.0;
+            bool gotDpi = false;
+            try
+            {
+                int hr = GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, out uint dpiX, out uint dpiY);
+                if (hr == 0 && dpiX > 0 && dpiY > 0)
+                {
+                    scaleX = dpiX / 96.0;
+                    scaleY = dpiY / 96.0;
+                    gotDpi = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write($"[ALTRun] WindowHelper GetDpiForMonitor 失败，回退窗口 DPI: {ex.Message}");
+            }
+
+            if (!gotDpi)
+            {
+                try
+                {
+                    DpiScale dpi = VisualTreeHelper.GetDpi(window);
+                    scaleX = dpi.DpiScaleX > 0 ? dpi.DpiScaleX : 1.0;
+                    scaleY = dpi.DpiScaleY > 0 ? dpi.DpiScaleY : 1.0;
+                }
+                catch
+                {
+                    scaleX = 1.0;
+                    scaleY = 1.0;
+                }
+            }
+
+            area = new Rect(
+                info.rcWork.Left / scaleX,
+                info.rcWork.Top / scaleY,
+                (info.rcWork.Right - info.rcWork.Left) / scaleX,
+                (info.rcWork.Bottom - info.rcWork.Top) / scaleY);
+            return true;
         }
     }
 }

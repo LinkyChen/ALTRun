@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Text;
 
@@ -71,53 +72,95 @@ namespace ALTRun.Services
         {
             if (string.IsNullOrWhiteSpace(text)) return string.Empty;
 
-            var sb = new StringBuilder();
+            var sb = new StringBuilder(text.Length);
+
+            // 原实现对每个汉字都 GetBytes(new char[]{ c })，一次刷新会分配成百上千个临时数组。
+            // 改成从 ArrayPool 租两块缓冲，连续汉字按段一次性编码，消除逐字分配。
+            char[]? charBuffer = null;
+            byte[]? byteBuffer = null;
+            if (GbEncoding != null)
+            {
+                charBuffer = ArrayPool<char>.Shared.Rent(text.Length);
+                // GB18030 的少数生僻字会编码成 4 字节，按 4 倍租用以防 GetBytes 缓冲不足
+                byteBuffer = ArrayPool<byte>.Shared.Rent(text.Length * 4);
+            }
+
             try
             {
-                foreach (char c in text)
+                int runStart = -1;   // 连续汉字段起点（-1 表示无待处理段）
+                int runEnd = -1;     // 终点（不含）
+
+                // 把累积的连续汉字段按 GB2312 边界定位首字母
+                void FlushChineseRun()
                 {
+                    if (runStart < 0 || charBuffer == null || byteBuffer == null || GbEncoding == null)
+                    {
+                        runStart = -1;
+                        return;
+                    }
+
+                    int length = runEnd - runStart;
+                    for (int k = 0; k < length; k++) charBuffer[k] = text[runStart + k];
+                    int byteCount = GbEncoding.GetBytes(charBuffer, 0, length, byteBuffer, 0);
+
+                    for (int b = 0; b + 1 < byteCount; b += 2)
+                    {
+                        int code = (byteBuffer[b] << 8) | byteBuffer[b + 1];
+                        for (int s = 0; s < 23; s++)
+                        {
+                            if (code >= SecPosValueList[s] && code < SecPosValueList[s + 1])
+                            {
+                                sb.Append(FirstLetterList[s]);
+                                break;
+                            }
+                        }
+                    }
+                    runStart = -1;
+                }
+
+                for (int i = 0; i < text.Length; i++)
+                {
+                    char c = text[i];
                     // 1. 英文字母与数字直接保留小写
                     if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))
                     {
+                        FlushChineseRun();
                         sb.Append(c);
                     }
                     else if (c >= 'A' && c <= 'Z')
                     {
+                        FlushChineseRun();
                         sb.Append(char.ToLowerInvariant(c));
                     }
-                    // 2. 特配与二级字直接查表
+                    // 2. 特配与二级字直接查表（优先于通用 GB2312 区间）
                     else if (SpecialCharMap.TryGetValue(c, out char mapped))
                     {
+                        FlushChineseRun();
                         sb.Append(mapped);
                     }
                     // 3. GB2312 一级字库区间快速精确定位 (3755 个标准汉字)
                     else if (c >= 0x4E00 && c <= 0x9FA5 && GbEncoding != null)
                     {
-                        byte[] bytes = GbEncoding.GetBytes(new char[] { c });
-                        if (bytes.Length >= 2)
-                        {
-                            int code = (bytes[0] << 8) + bytes[1];
-                            char letter = ' ';
-                            for (int i = 0; i < 23; i++)
-                            {
-                                if (code >= SecPosValueList[i] && code < SecPosValueList[i + 1])
-                                {
-                                    letter = FirstLetterList[i];
-                                    break;
-                                }
-                            }
-                            if (letter != ' ')
-                            {
-                                sb.Append(letter);
-                            }
-                        }
+                        if (runStart < 0) runStart = i;
+                        runEnd = i + 1;
+                    }
+                    else
+                    {
+                        FlushChineseRun();
                     }
                 }
+                FlushChineseRun();
             }
             catch
             {
-                // 异常保底
+                // 异常保底：已拼出的首字母仍可用
             }
+            finally
+            {
+                if (charBuffer != null) ArrayPool<char>.Shared.Return(charBuffer);
+                if (byteBuffer != null) ArrayPool<byte>.Shared.Return(byteBuffer);
+            }
+
             return sb.ToString();
         }
     }

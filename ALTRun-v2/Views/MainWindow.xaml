@@ -158,13 +158,14 @@
                     </TextBox.Template>
                 </TextBox>
 
-                <!-- 占位符文字 -->
+                <!-- 占位符文字：右移一段距离，避开文本框最左侧闪烁的光标 -->
                 <TextBlock x:Name="PlaceholderText"
                            Grid.Column="1"
                            Text="{x:Static svc:AppStrings.SearchPlaceholder}"
                            FontSize="16"
                            Foreground="{DynamicResource TextMutedBrush}"
                            VerticalAlignment="Center"
+                           Margin="12,0,0,0"
                            IsHitTestVisible="False"/>
 
                 <!-- 主题风格切换菜单 -->

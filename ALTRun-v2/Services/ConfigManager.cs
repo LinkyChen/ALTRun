@@ -12,8 +12,8 @@ namespace ALTRun.Services
     {
         public string HotKey { get; set; } = "Alt + R";
         public bool AutoRun { get; set; } = true;
-        public string Theme { get; set; } = "obsidian";
-        public bool DarkMode { get; set; } = true;
+        public string Theme { get; set; } = "pearl";
+        public bool DarkMode { get; set; } = false;
         public double WindowWidth { get; set; } = 660;
         public double WindowHeight { get; set; } = 460;
         public bool SingleClickToRun { get; set; } = true;
@@ -29,6 +29,7 @@ namespace ALTRun.Services
     {
         private readonly string _appDir;
         private readonly string _jsonConfigPath;
+        private readonly FrequencyStore _freqStore;
 
         // 延迟保存：频次等高频小改动先标脏，合并到一次写盘，避免每次执行都全量序列化
         private System.Windows.Threading.DispatcherTimer? _saveTimer;
@@ -53,6 +54,7 @@ namespace ALTRun.Services
 
             _appDir = AppDomain.CurrentDomain.BaseDirectory;
             _jsonConfigPath = Path.Combine(_appDir, "ALTRun_Config.json");
+            _freqStore = new FrequencyStore(_appDir);
         }
 
         /// <summary>本次启动是否因配置文件损坏而做了备份；null 表示未发生。</summary>
@@ -72,6 +74,10 @@ namespace ALTRun.Services
 
         public void Load()
         {
+            // 独立频次必须先于配置读取载入：这样 TryLoadJsonConfig 在补项后触发 Save() 时，
+            // 写回配置的已经是合并过频次的最终值，不会把独立文件里的历史数据覆盖掉。
+            _freqStore.Load();
+
             var state = TryLoadJsonConfig();
             switch (state)
             {
@@ -91,6 +97,7 @@ namespace ALTRun.Services
                     if (Settings.ShortCuts.Count == 0)
                     {
                         Settings.ShortCuts = GenerateModernDefaultShortcuts();
+                        _freqStore.ApplyTo(Settings.ShortCuts);
                         RefreshPinyinCache();
                     }
                     return;
@@ -117,12 +124,14 @@ namespace ALTRun.Services
                     {
                         Settings.ShortCuts = imported;
 
-                        // 尝试加载对应的 FavoriteList.txt
-                        string favPath = Path.Combine(Path.GetDirectoryName(path) ?? "", "FavoriteList.txt");
-                        ApplyFavoriteList(favPath);
+                        // FavoriteList 加权已在 ImportFromLegacyFile 内应用到导入列表本身，
+                        // 这里不再对同一个列表重复加权。
 
                         // 确保系统快捷指令开箱可用
                         EnsureSystemShortcuts(Settings.ShortCuts);
+
+                        // 旧版导入的频次先让位给独立存储里的历史数据
+                        _freqStore.ApplyTo(Settings.ShortCuts);
 
                         RefreshPinyinCache();
                         Save();
@@ -138,6 +147,7 @@ namespace ALTRun.Services
                 IsFirstRun = true;
             }
             Settings.ShortCuts = GenerateModernDefaultShortcuts();
+            _freqStore.ApplyTo(Settings.ShortCuts);
             RefreshPinyinCache();
             Save();
         }
@@ -213,6 +223,10 @@ namespace ALTRun.Services
                 }
                 Settings = settings;
 
+                // 独立频次优先于配置内的 Freq：即使本次新编译的 exe 带了全新的默认配置
+                // （Freq 全为 0），也能在这里把历史使用次数找回来。
+                _freqStore.ApplyTo(Settings.ShortCuts);
+
                 // 确保系统级现代快捷方式开箱即用，无感修复历史遗留失效配置
                 configChanged |= EnsureSystemShortcuts(Settings.ShortCuts);
 
@@ -284,6 +298,9 @@ namespace ALTRun.Services
             {
                 AppLog.Write($"[ALTRun] ConfigManager.cs:164 静默异常: {ex.Message}");
             }
+
+            // 频次同步写入独立文件：exe 更新时只替换 exe，这个文件不动，历史使用次数就不会丢。
+            _freqStore.SaveFrom(Settings.ShortCuts);
         }
 
         /// <summary>
@@ -335,6 +352,21 @@ namespace ALTRun.Services
         public void MarkDirty()
         {
             _isDirty = true;
+
+            // DispatcherTimer 必须挂在有消息循环的 UI 线程上：若从后台线程首次创建，
+            // Tick 永远不会触发，"延迟保存"会静默失效，只能靠退出时兜底。
+            var dispatcher = System.Windows.Application.Current?.Dispatcher;
+            if (dispatcher != null && !dispatcher.CheckAccess())
+            {
+                dispatcher.BeginInvoke(new Action(StartSaveTimer));
+                return;
+            }
+
+            StartSaveTimer();
+        }
+
+        private void StartSaveTimer()
+        {
             _saveTimer ??= new System.Windows.Threading.DispatcherTimer
             {
                 Interval = TimeSpan.FromMilliseconds(SaveDelayMs)
@@ -368,27 +400,38 @@ namespace ALTRun.Services
         {
             foreach (var item in Settings.ShortCuts)
             {
-                // 一次性预计算小写形式与拼音，搜索时直接复用，避免逐字符重复分配字符串
-                item.LowerShortCut = (item.ShortCut ?? "").ToLowerInvariant();
-                item.LowerName = (item.Name ?? "").ToLowerInvariant();
-
-                try
-                {
-                    item.PinyinInitials = PinyinHelper.GetInitials(item.Name ?? "");
-                    item.PinyinShortcut = PinyinHelper.GetInitials(item.ShortCut ?? "");
-                }
-                catch (Exception ex)
-                {
-                    // 拼音库异常时退回小写名称，功能降级但不影响搜索可用性
-                    AppLog.Write($"[ALTRun] ConfigManager 拼音缓存计算失败 ({item.Name}): {ex.Message}");
-                    item.PinyinInitials = item.LowerName;
-                    item.PinyinShortcut = item.LowerShortCut;
-                }
-
-                // GetInitials 内部已输出小写，这里再兜底一次，保证缓存不依赖其实现细节
-                item.LowerPinyinInitials = item.PinyinInitials.ToLowerInvariant();
-                item.LowerPinyinShortcut = item.PinyinShortcut.ToLowerInvariant();
+                RefreshPinyinCache(item);
             }
+        }
+
+        /// <summary>
+        /// 只刷新一个条目的小写与拼音缓存。管理窗口编辑/新增、拖入添加等单条变更走这里，
+        /// 不必为了一项更新重算整个列表（H1 修复引入的全量刷新副作用）。
+        /// </summary>
+        public void RefreshPinyinCache(ShortCutItem item)
+        {
+            if (item == null) return;
+
+            // 一次性预计算小写形式与拼音，搜索时直接复用，避免逐字符重复分配字符串
+            item.LowerShortCut = (item.ShortCut ?? "").ToLowerInvariant();
+            item.LowerName = (item.Name ?? "").ToLowerInvariant();
+
+            try
+            {
+                item.PinyinInitials = PinyinHelper.GetInitials(item.Name ?? "");
+                item.PinyinShortcut = PinyinHelper.GetInitials(item.ShortCut ?? "");
+            }
+            catch (Exception ex)
+            {
+                // 拼音库异常时退回小写名称，功能降级但不影响搜索可用性
+                AppLog.Write($"[ALTRun] ConfigManager 拼音缓存计算失败 ({item.Name}): {ex.Message}");
+                item.PinyinInitials = item.LowerName;
+                item.PinyinShortcut = item.LowerShortCut;
+            }
+
+            // GetInitials 内部已输出小写，这里再兜底一次，保证缓存不依赖其实现细节
+            item.LowerPinyinInitials = item.PinyinInitials.ToLowerInvariant();
+            item.LowerPinyinShortcut = item.PinyinShortcut.ToLowerInvariant();
         }
 
         public List<ShortCutItem> ImportFromLegacyFile(string filePath)
@@ -481,7 +524,7 @@ namespace ALTRun.Services
                                     ShortCut = keyword,
                                     Name = name,
                                     CommandLine = name,
-                                    Freq = 500
+                                    Freq = 0
                                 });
                             }
                         }
@@ -505,9 +548,13 @@ namespace ALTRun.Services
                 // 若导入的是 ShortCutList.txt，同时自动检测同目录下是否存在 FavoriteList.txt 并融合加权
                 string dir = Path.GetDirectoryName(filePath) ?? "";
                 string favPath = Path.Combine(dir, "FavoriteList.txt");
-                if (File.Exists(favPath))
+                // 导入的是 FavoriteList.txt 本身时不能再加权一遍（其条目已按 500 计入）
+                bool isFavoriteFile = string.Equals(Path.GetFileName(filePath), "FavoriteList.txt", StringComparison.OrdinalIgnoreCase);
+                if (!isFavoriteFile && File.Exists(favPath))
                 {
-                    ApplyFavoriteList(favPath);
+                    // 加权必须作用于本次导入的列表：调用方稍后才把它 AddRange 进 Settings.ShortCuts，
+                    // 若沿用旧列表会让新导入的条目吃不到收藏加权。
+                    ApplyFavoriteList(favPath, list);
                 }
             }
             catch (Exception ex)
@@ -536,9 +583,10 @@ namespace ALTRun.Services
             }
         }
 
-        private void ApplyFavoriteList(string favPath)
+        private void ApplyFavoriteList(string favPath, List<ShortCutItem>? target = null)
         {
             if (!File.Exists(favPath)) return;
+            var items = target ?? Settings.ShortCuts;
             try
             {
                 var lines = File.ReadAllLines(favPath, DetectLegacyEncoding(favPath));
@@ -550,8 +598,8 @@ namespace ALTRun.Services
                         string keyword = parts[0].Trim();
                         string name = parts[1].Trim();
 
-                        var match = Settings.ShortCuts.Find(x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase) ||
-                                                                 string.Equals(x.ShortCut, keyword, StringComparison.OrdinalIgnoreCase));
+                        var match = items.Find(x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase) ||
+                                                    string.Equals(x.ShortCut, keyword, StringComparison.OrdinalIgnoreCase));
                         if (match != null)
                         {
                             match.Freq += 500; // 最爱置顶加权
@@ -657,16 +705,16 @@ namespace ALTRun.Services
         {
             return new List<ShortCutItem>
             {
-                new() { ShortCut = "desktop", Name = "显示桌面", CommandLine = "win:desktop", Freq = 130 },
-                new() { ShortCut = "top", Name = "置顶当前窗口", CommandLine = "win:top", Freq = 95 },
-                new() { ShortCut = "untop", Name = "取消置顶当前窗口", CommandLine = "win:untop", Freq = 60 },
-                new() { ShortCut = "minall", Name = "最小化所有窗口", CommandLine = "win:minall", Freq = 85 },
-                new() { ShortCut = "maxall", Name = "还原所有窗口", CommandLine = "win:maxall", Freq = 75 },
-                new() { ShortCut = "closewin", Name = "关闭当前窗口", CommandLine = "win:close", Freq = 65 },
-                new() { ShortCut = "closeall", Name = "关闭全部普通窗口", CommandLine = "win:closeall", Freq = 50 },
-                new() { ShortCut = "lock", Name = "锁定屏幕", CommandLine = "sys:lock", Freq = 90 },
-                new() { ShortCut = "sleep", Name = "系统睡眠", CommandLine = "sys:sleep", Freq = 80 },
-                new() { ShortCut = "r", Name = "运行 (直接回车打开运行框)", CommandLine = "{%p}", Freq = 85 }
+                new() { ShortCut = "desktop", Name = "显示桌面", CommandLine = "win:desktop", Freq = 0 },
+                new() { ShortCut = "top", Name = "置顶当前窗口", CommandLine = "win:top", Freq = 0 },
+                new() { ShortCut = "untop", Name = "取消置顶当前窗口", CommandLine = "win:untop", Freq = 0 },
+                new() { ShortCut = "minall", Name = "最小化所有窗口", CommandLine = "win:minall", Freq = 0 },
+                new() { ShortCut = "maxall", Name = "还原所有窗口", CommandLine = "win:maxall", Freq = 0 },
+                new() { ShortCut = "closewin", Name = "关闭当前窗口", CommandLine = "win:close", Freq = 0 },
+                new() { ShortCut = "closeall", Name = "关闭全部普通窗口", CommandLine = "win:closeall", Freq = 0 },
+                new() { ShortCut = "lock", Name = "锁定屏幕", CommandLine = "sys:lock", Freq = 0 },
+                new() { ShortCut = "sleep", Name = "系统睡眠", CommandLine = "sys:sleep", Freq = 0 },
+                new() { ShortCut = "r", Name = "运行 (直接回车打开运行框)", CommandLine = "{%p}", Freq = 0 }
             };
         }
 
@@ -675,55 +723,55 @@ namespace ALTRun.Services
             return new List<ShortCutItem>
             {
                 // ── 系统窗口与桌面管理 ──
-                new() { ShortCut = "desktop", Name = "显示桌面", CommandLine = "win:desktop", Freq = 130 },
-                new() { ShortCut = "top", Name = "置顶当前窗口", CommandLine = "win:top", Freq = 95 },
-                new() { ShortCut = "untop", Name = "取消置顶当前窗口", CommandLine = "win:untop", Freq = 60 },
-                new() { ShortCut = "minall", Name = "最小化所有窗口", CommandLine = "win:minall", Freq = 85 },
-                new() { ShortCut = "maxall", Name = "还原所有窗口", CommandLine = "win:maxall", Freq = 75 },
-                new() { ShortCut = "closewin", Name = "关闭当前窗口", CommandLine = "win:close", Freq = 65 },
-                new() { ShortCut = "closeall", Name = "关闭全部普通窗口", CommandLine = "win:closeall", Freq = 50 },
+                new() { ShortCut = "desktop", Name = "显示桌面", CommandLine = "win:desktop", Freq = 0 },
+                new() { ShortCut = "top", Name = "置顶当前窗口", CommandLine = "win:top", Freq = 0 },
+                new() { ShortCut = "untop", Name = "取消置顶当前窗口", CommandLine = "win:untop", Freq = 0 },
+                new() { ShortCut = "minall", Name = "最小化所有窗口", CommandLine = "win:minall", Freq = 0 },
+                new() { ShortCut = "maxall", Name = "还原所有窗口", CommandLine = "win:maxall", Freq = 0 },
+                new() { ShortCut = "closewin", Name = "关闭当前窗口", CommandLine = "win:close", Freq = 0 },
+                new() { ShortCut = "closeall", Name = "关闭全部普通窗口", CommandLine = "win:closeall", Freq = 0 },
 
                 // ── 电源与系统安全 ──
-                new() { ShortCut = "lock", Name = "锁定屏幕", CommandLine = "sys:lock", Freq = 90 },
-                new() { ShortCut = "sleep", Name = "系统睡眠", CommandLine = "sys:sleep", Freq = 80 },
-                new() { ShortCut = "shutdown", Name = "立即关机", CommandLine = "shutdown.exe /s /t 0", Freq = 50 },
-                new() { ShortCut = "reboot", Name = "立即重启", CommandLine = "shutdown.exe /r /t 0", Freq = 50 },
+                new() { ShortCut = "lock", Name = "锁定屏幕", CommandLine = "sys:lock", Freq = 0 },
+                new() { ShortCut = "sleep", Name = "系统睡眠", CommandLine = "sys:sleep", Freq = 0 },
+                new() { ShortCut = "shutdown", Name = "立即关机", CommandLine = "shutdown.exe /s /t 0", Freq = 0 },
+                new() { ShortCut = "reboot", Name = "立即重启", CommandLine = "shutdown.exe /r /t 0", Freq = 0 },
 
                 // ── 原生工具与常用终端 ──
-                new() { ShortCut = "r", Name = "运行 (直接回车打开运行框)", CommandLine = "{%p}", Freq = 85 },
-                new() { ShortCut = "wt", Name = "Windows Terminal 终端", CommandLine = "wt.exe", Freq = 120 },
-                new() { ShortCut = "pwsh", Name = "PowerShell 终端", CommandLine = "powershell.exe", Freq = 90 },
-                new() { ShortCut = "cmd", Name = "命令提示符", CommandLine = "cmd.exe", Freq = 80 },
-                new() { ShortCut = "calc", Name = "计算器", CommandLine = "calc.exe", Freq = 100 },
-                new() { ShortCut = "snip", Name = "截图工具 (剪切板)", CommandLine = "ms-screenclip:", Freq = 95 },
-                new() { ShortCut = "task", Name = "任务管理器", CommandLine = "taskmgr.exe", Freq = 90 },
-                new() { ShortCut = "pad", Name = "记事本", CommandLine = "notepad.exe", Freq = 75 },
-                new() { ShortCut = "reg", Name = "注册表编辑器", CommandLine = "regedit.exe", Freq = 60 },
-                new() { ShortCut = "dev", Name = "设备管理器", CommandLine = "devmgmt.msc", Freq = 55 },
-                new() { ShortCut = "hosts", Name = "编辑 Hosts 文件", CommandLine = "notepad.exe C:\\Windows\\System32\\drivers\\etc\\hosts", Freq = 50 },
+                new() { ShortCut = "r", Name = "运行 (直接回车打开运行框)", CommandLine = "{%p}", Freq = 0 },
+                new() { ShortCut = "wt", Name = "Windows Terminal 终端", CommandLine = "wt.exe", Freq = 0 },
+                new() { ShortCut = "pwsh", Name = "PowerShell 终端", CommandLine = "powershell.exe", Freq = 0 },
+                new() { ShortCut = "cmd", Name = "命令提示符", CommandLine = "cmd.exe", Freq = 0 },
+                new() { ShortCut = "calc", Name = "计算器", CommandLine = "calc.exe", Freq = 0 },
+                new() { ShortCut = "snip", Name = "截图工具 (剪切板)", CommandLine = "ms-screenclip:", Freq = 0 },
+                new() { ShortCut = "task", Name = "任务管理器", CommandLine = "taskmgr.exe", Freq = 0 },
+                new() { ShortCut = "pad", Name = "记事本", CommandLine = "notepad.exe", Freq = 0 },
+                new() { ShortCut = "reg", Name = "注册表编辑器", CommandLine = "regedit.exe", Freq = 0 },
+                new() { ShortCut = "dev", Name = "设备管理器", CommandLine = "devmgmt.msc", Freq = 0 },
+                new() { ShortCut = "hosts", Name = "编辑 Hosts 文件", CommandLine = "notepad.exe C:\\Windows\\System32\\drivers\\etc\\hosts", Freq = 0 },
 
                 // ── Windows 10/11 现代设置 ──
-                new() { ShortCut = "set", Name = "Windows 设置主页", CommandLine = "ms-settings:", Freq = 90 },
-                new() { ShortCut = "app", Name = "已安装应用 (卸载程序)", CommandLine = "ms-settings:appsfeatures", Freq = 80 },
-                new() { ShortCut = "net", Name = "网络与 Internet 设置", CommandLine = "ms-settings:network", Freq = 70 },
-                new() { ShortCut = "blue", Name = "蓝牙与设备设置", CommandLine = "ms-settings:bluetooth", Freq = 65 },
-                new() { ShortCut = "up", Name = "Windows 更新检查", CommandLine = "ms-settings:windowsupdate", Freq = 60 },
-                new() { ShortCut = "vol", Name = "声音与音量混合器", CommandLine = "ms-settings:sound", Freq = 55 },
+                new() { ShortCut = "set", Name = "Windows 设置主页", CommandLine = "ms-settings:", Freq = 0 },
+                new() { ShortCut = "app", Name = "已安装应用 (卸载程序)", CommandLine = "ms-settings:appsfeatures", Freq = 0 },
+                new() { ShortCut = "net", Name = "网络与 Internet 设置", CommandLine = "ms-settings:network", Freq = 0 },
+                new() { ShortCut = "blue", Name = "蓝牙与设备设置", CommandLine = "ms-settings:bluetooth", Freq = 0 },
+                new() { ShortCut = "up", Name = "Windows 更新检查", CommandLine = "ms-settings:windowsupdate", Freq = 0 },
+                new() { ShortCut = "vol", Name = "声音与音量混合器", CommandLine = "ms-settings:sound", Freq = 0 },
 
                 // ── 常用系统路径与控制面板 ──
-                new() { ShortCut = "pc", Name = "此电脑", CommandLine = "explorer.exe shell:::{20D04FE0-3AEA-1069-A2D8-08002B30309D}", Freq = 100 },
-                new() { ShortCut = "down", Name = "下载文件夹", CommandLine = "shell:Downloads", Freq = 80 },
-                new() { ShortCut = "startup", Name = "系统启动文件夹", CommandLine = "shell:startup", Freq = 60 },
-                new() { ShortCut = "recent", Name = "最近打开文件", CommandLine = "shell:Recent", Freq = 55 },
-                new() { ShortCut = "control", Name = "控制面板", CommandLine = "control.exe", Freq = 65 },
-                new() { ShortCut = "sys", Name = "系统属性 (高级环境变量)", CommandLine = "Sysdm.cpl", Freq = 50 },
+                new() { ShortCut = "pc", Name = "此电脑", CommandLine = "explorer.exe shell:::{20D04FE0-3AEA-1069-A2D8-08002B30309D}", Freq = 0 },
+                new() { ShortCut = "down", Name = "下载文件夹", CommandLine = "shell:Downloads", Freq = 0 },
+                new() { ShortCut = "startup", Name = "系统启动文件夹", CommandLine = "shell:startup", Freq = 0 },
+                new() { ShortCut = "recent", Name = "最近打开文件", CommandLine = "shell:Recent", Freq = 0 },
+                new() { ShortCut = "control", Name = "控制面板", CommandLine = "control.exe", Freq = 0 },
+                new() { ShortCut = "sys", Name = "系统属性 (高级环境变量)", CommandLine = "Sysdm.cpl", Freq = 0 },
 
                 // ── 网络搜索与剪贴板增强 ──
-                new() { ShortCut = "g", Name = "Google 搜索", CommandLine = "https://www.google.com/search?q=%p", ParamType = ParamType.ptUTF8Query, Freq = 70 },
-                new() { ShortCut = "b", Name = "百度搜索", CommandLine = "https://www.baidu.com/s?wd=%p", ParamType = ParamType.ptURLQuery, Freq = 60 },
-                new() { ShortCut = "gh", Name = "GitHub 仓库搜索", CommandLine = "https://github.com/search?q=%p", ParamType = ParamType.ptUTF8Query, Freq = 50 },
-                new() { ShortCut = "cg", Name = "Google 搜索剪贴板内容", CommandLine = "https://www.google.com/search?q={%c}", Freq = 40 },
-                new() { ShortCut = "cb", Name = "百度搜索剪贴板内容", CommandLine = "https://www.baidu.com/s?wd={%c}", Freq = 40 }
+                new() { ShortCut = "g", Name = "Google 搜索", CommandLine = "https://www.google.com/search?q=%p", ParamType = ParamType.ptUTF8Query, Freq = 0 },
+                new() { ShortCut = "b", Name = "百度搜索", CommandLine = "https://www.baidu.com/s?wd=%p", ParamType = ParamType.ptURLQuery, Freq = 0 },
+                new() { ShortCut = "gh", Name = "GitHub 仓库搜索", CommandLine = "https://github.com/search?q=%p", ParamType = ParamType.ptUTF8Query, Freq = 0 },
+                new() { ShortCut = "cg", Name = "Google 搜索剪贴板内容", CommandLine = "https://www.google.com/search?q={%c}", Freq = 0 },
+                new() { ShortCut = "cb", Name = "百度搜索剪贴板内容", CommandLine = "https://www.baidu.com/s?wd={%c}", Freq = 0 }
             };
         }
     }

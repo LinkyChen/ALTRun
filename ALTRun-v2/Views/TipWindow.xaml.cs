@@ -1,6 +1,7 @@
 using System;
 using System.Windows;
 using System.Windows.Input;
+using ALTRun.Services;
 
 namespace ALTRun.Views
 {
@@ -19,8 +20,9 @@ namespace ALTRun.Views
             MessageText.Text = message;
             Owner = owner;
 
-            Rect area = SystemParameters.WorkArea;
-            MaxHeight = area.Height - 40;
+            // 跟随宿主窗口所在显示器，避免副屏呼出时提示窗跑回主屏
+            Rect area = WindowHelper.GetWorkArea(owner);
+            MaxHeight = Math.Max(160, area.Height - 40);
 
             // Enter / 空格 / Esc 均可关闭提示窗
             PreviewKeyDown += (_, e) =>

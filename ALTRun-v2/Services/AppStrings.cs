@@ -110,12 +110,12 @@ namespace ALTRun.Services
         public const string SearchPlaceholder = "输入快捷键 / 拼音首字母 / >命令 / =算式...";
         public const string TooltipThemeMenu = "选择外观主题风格";
         public const string TooltipManage = "快捷方式管理";
-        public const string HintRun = "↵ / 单击 启动";
+        public const string HintRun = "↵  单击 启动";
         public const string HintRunAsAdmin = "Ctrl+↵ 提权运行";
         public const string HintNumberKey = "0~9 键直达";
         public const string HintTabComplete = "Tab 补全";
-        public const string HintContextMenuDir = "Ctrl+D / 右键 目录";
-        public const string HintEscHide = "Esc 隐藏";
+        public const string HintContextMenuDir = "Ctrl+D 打开所在目录";
+        public const string HintEscHide = "Esc 一次清空 二次隐藏";
 
         // ── 欢迎向导（WelcomeWizardWindow）─────────────────────
         public static readonly string WizardHeader =
@@ -164,6 +164,19 @@ namespace ALTRun.Services
         public const string TooltipBrowseFile = "直接浏览并选取可执行程序(.exe)、桌面快捷方式(.lnk)或任意文档";
         public const string TooltipBrowseFolder = "选取常用文件夹目录";
         public const string BtnSaveEdit = "✔ 保存修改";
+
+        // 列表查重（按目标路径）
+        public const string BtnDedup = "查重合并";
+        public const string TooltipDedup = "按目标路径查重：同一目标的重复项以频次高的为主，低频快捷词用 - 连接合并";
+        public const string DedupNoDuplicate = "未发现重复项";
+        public const string DedupNoDuplicateBody = "没有指向相同目标路径的重复快捷项，无需处理。";
+        public const string DedupConfirmTitle = "查重合并预览";
+        public const string DedupConfirmHeader = "发现 {0} 组重复项，合并后将删除 {1} 个重复条目：";
+        public const string DedupMergeLine = "• {0}\n  合并为快捷词：{1}（保留频次 {2}）";
+        public const string DedupConfirmYes = "确认合并";
+        public const string DedupConfirmNo = "取消";
+        public const string DedupDoneTitle = "合并完成";
+        public const string DedupDoneFormat = "已合并 {0} 组重复项，删除 {1} 个重复条目，配置已保存。";
 
         // ── 软件扫描窗口（ScanAppsWindow.xaml）────────────────
         public const string ScanWindowTitle = "ALTRun - 扫描并导入本机已安装软件";

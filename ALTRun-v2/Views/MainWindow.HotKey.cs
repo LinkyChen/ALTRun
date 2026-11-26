@@ -68,17 +68,28 @@ namespace ALTRun.Views
             _globalHotKey.HotKeyPressed -= ShowAndActivate;
             _globalHotKey.HotKeyPressed += ShowAndActivate;
 
-            bool success = _globalHotKey.Register(hwnd, modifiers, key);
-            if (success)
-            {
-                string hotkeyText = FormatHotKeyText(modifiers, key);
-                App.Config.Settings.HotKey = hotkeyText;
-                App.Config.Save();
-                _effectiveHotKeyText = hotkeyText;
+            // Register() 会先注销旧热键再注册新组合。若新组合被占用，必须把旧组合装回去，
+            // 否则程序进入"没有任何全局热键"的状态，只能重启恢复。
+            bool hadHotKey = !string.IsNullOrEmpty(EffectiveHotKeyText);
+            var (oldModifiers, oldKey) = ParseHotKey(EffectiveHotKeyText);
 
-                _trayIconService?.UpdateTooltip(string.Format(AppStrings.TrayTooltipFormat, hotkeyText));
+            bool success = _globalHotKey.Register(hwnd, modifiers, key);
+            if (!success)
+            {
+                if (hadHotKey && !_globalHotKey.Register(hwnd, oldModifiers, oldKey))
+                {
+                    AppLog.Write("[ALTRun] 更新热键失败，且回滚旧热键也失败：当前无全局热键");
+                }
+                return false;
             }
-            return success;
+
+            string hotkeyText = FormatHotKeyText(modifiers, key);
+            App.Config.Settings.HotKey = hotkeyText;
+            App.Config.Save();
+            _effectiveHotKeyText = hotkeyText;
+
+            _trayIconService?.UpdateTooltip(string.Format(AppStrings.TrayTooltipFormat, hotkeyText));
+            return true;
         }
 
         public static (KeyModifiers modifiers, Key key) ParseHotKey(string hotkeyStr)

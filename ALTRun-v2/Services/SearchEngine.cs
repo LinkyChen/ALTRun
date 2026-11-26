@@ -113,6 +113,37 @@ namespace ALTRun.Services
             return result;
         }
 
+        /// <summary>
+        /// 只判断"有没有匹配"，不打分排序、不 CopyForDisplay、不构造 SearchResult。
+        /// 数字键直达只需要一个布尔判断，走 Search() 会在按键热路径上产生整表分配。
+        /// </summary>
+        public static bool HasAnyMatch(string rawInput, List<ShortCutItem> allItems)
+        {
+            if (allItems == null || allItems.Count == 0) return false;
+            if (string.IsNullOrWhiteSpace(rawInput)) return true;
+
+            string input = rawInput.Trim();
+
+            // 命令行直达与计算器结果与 Search() 保持一致
+            if (input.StartsWith(">")) return true;
+            if (input.StartsWith("=") || IsMathExpression(input))
+            {
+                string expr = input.StartsWith("=") ? input.Substring(1).Trim() : input;
+                if (!string.IsNullOrEmpty(TryEvaluateMath(expr))) return true;
+            }
+
+            string keyword = input;
+            int spaceIndex = input.IndexOf(' ');
+            if (spaceIndex > 0) keyword = input.Substring(0, spaceIndex).Trim();
+
+            string lowerKeyword = keyword.ToLowerInvariant();
+            foreach (var item in allItems)
+            {
+                if (CalculateMatchScore(item, lowerKeyword) > 0) return true;
+            }
+            return false;
+        }
+
         private static int CalculateMatchScore(ShortCutItem item, string lowerKeyword)
         {
             // 优先使用预计算缓存；临时构造项（计算器/终端命令）缓存为空时实时计算兜底。

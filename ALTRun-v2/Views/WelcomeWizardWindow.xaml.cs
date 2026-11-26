@@ -29,36 +29,41 @@ namespace ALTRun.Views
             PnlButtons.IsEnabled = false;
             PnlScanning.Visibility = Visibility.Visible;
 
-            int count = 0;
-            await Task.Run(() =>
+            // UI 线程先取快照，后台只做磁盘扫描；共享配置的写入、缓存刷新与保存全部回到 UI 线程，
+            // 避免后台直接替换列表/改缓存与搜索遍历并发。
+            var existing = App.Config.Settings.ShortCuts.ToList();
+            var additions = await Task.Run(() =>
             {
-                var existing = App.Config.Settings.ShortCuts.ToList();
                 var scanned = AppScannerService.ScanInstalledApps(existing);
-
                 var existingPaths = new HashSet<string>(existing.Select(x => (x.CommandLine ?? "").Trim().Trim('\"')), StringComparer.OrdinalIgnoreCase);
+                var newItems = new List<ShortCutItem>();
 
                 foreach (var item in scanned)
                 {
                     if (existingPaths.Contains(item.TargetPath)) continue;
 
-                    var newItem = new ShortCutItem
+                    newItems.Add(new ShortCutItem
                     {
                         Name = item.Name,
                         ShortCut = (item.ShortCut ?? "").ToLowerInvariant(),
                         CommandLine = item.TargetPath,
                         WorkingDir = string.IsNullOrWhiteSpace(item.WorkingDir) ? Path.GetDirectoryName(item.TargetPath) ?? "" : item.WorkingDir,
                         Freq = 0
-                    };
-
-                    existing.Add(newItem);
+                    });
                     existingPaths.Add(item.TargetPath);
-                    count++;
                 }
 
-                App.Config.Settings.ShortCuts = existing;
-                App.Config.RefreshPinyinCache();
-                App.Config.Save();
+                return newItems;
             });
+
+            int count = additions.Count;
+            existing.AddRange(additions);
+            App.Config.Settings.ShortCuts = existing;
+            foreach (var item in additions)
+            {
+                App.Config.RefreshPinyinCache(item);
+            }
+            App.Config.Save();
 
             PnlScanning.Visibility = Visibility.Collapsed;
 

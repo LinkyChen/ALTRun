@@ -40,11 +40,31 @@ namespace ALTRun.Views
             _currentResult = SearchEngine.Search(query, App.Config.Settings.ShortCuts);
 
             ResultListBox.ItemsSource = _currentResult.Items;
-            if (_currentResult.Items.Count > 0)
+            // 搜索结果重建后重置到第一项，并同步逻辑索引（SelectedIndex 会被布局重置，不能作为真相源）
+            _selectedResultIndex = _currentResult.Items.Count > 0 ? 0 : -1;
+            if (_selectedResultIndex >= 0)
             {
                 ResultListBox.SelectedIndex = 0;
             }
             ResetListScrollToTop();
+        }
+
+        /// <summary>
+        /// 统一设置当前候选项：同步逻辑索引与 ListBox 视觉选中，并把目标项滚入视野。
+        /// 滚轮/上下键都通过本方法，确保“运行一次后再次呼出、SelectedIndex 被重置为 -1”时仍能连续切换。
+        /// </summary>
+        private void SetSelectedResult(int index)
+        {
+            int count = ResultListBox.Items.Count;
+            if (count == 0)
+            {
+                _selectedResultIndex = -1;
+                return;
+            }
+            index = Math.Max(0, Math.Min(count - 1, index));
+            _selectedResultIndex = index;
+            ResultListBox.SelectedIndex = index;
+            ResultListBox.ScrollIntoView(ResultListBox.Items[index]);
         }
 
 
@@ -88,20 +108,46 @@ namespace ALTRun.Views
             int steps = Math.Max(1, Math.Abs(e.Delta) / 120);
             if (e.Delta > 0) steps = -steps; // 向上滚动选中上一项
 
-            int current = ResultListBox.SelectedIndex;
-            int target = current < 0 ? 0 : Math.Min(ResultListBox.Items.Count - 1, Math.Max(0, current + steps));
-
-            if (current != target)
+            // 关键：以逻辑索引为起点，绝不读 ListBox.SelectedIndex。
+            // 窗口 Hide/Show 或布局刷新会把 SelectedIndex 重置为 -1，若据此计算，
+            // 每次向下滚都会得到 -1 + 1 = 0，表现就是“永远停在第 1 项”。
+            int current = _selectedResultIndex;
+            if (current < 0 || current >= ResultListBox.Items.Count)
             {
+                // 兜底：逻辑索引失效时，向下滚从 -1 起步落到第 1 项，向上滚从末尾倒着选
+                current = steps < 0 ? ResultListBox.Items.Count : -1;
+            }
+            int target = Math.Min(ResultListBox.Items.Count - 1, Math.Max(0, current + steps));
+
+            if (target != current)
+            {
+                SetSelectedResult(target);
+            }
+            else
+            {
+                // 目标与逻辑索引一致时也要确保视觉选中被重新应用（SelectedIndex 可能已被重置）
                 ResultListBox.SelectedIndex = target;
-                ResultListBox.ScrollIntoView(ResultListBox.SelectedItem);
+                ResultListBox.ScrollIntoView(ResultListBox.Items[target]);
             }
             e.Handled = true;
         }
 
+        /// <summary>
+        /// 取当前逻辑选中的候选项。绝不读 ListBox.SelectedItem —— 替换 ItemsSource 后，
+        /// 它（与集合视图的 CurrentItem 同步时）会残留上一次的旧项对象，导致
+        /// “候选项显示正常变化，但执行时永远运行同一项（如记事本）”。
+        /// 唯一真相源是 _currentResult.Items + _selectedResultIndex。
+        /// </summary>
+        private ShortCutItem? GetSelectedResultItem()
+        {
+            if (_selectedResultIndex < 0 || _selectedResultIndex >= _currentResult.Items.Count)
+                return null;
+            return _currentResult.Items[_selectedResultIndex];
+        }
+
         private void ExecuteSelectedItem(bool runAsAdmin)
         {
-            if (ResultListBox.SelectedItem is ShortCutItem item)
+            if (GetSelectedResultItem() is ShortCutItem item)
             {
                 string param = _currentResult.ExtractedParam;
                 bool success = CommandExecutor.Execute(item, param, runAsAdmin, out string? errorMessage);

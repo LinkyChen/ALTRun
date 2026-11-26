@@ -175,6 +175,17 @@
                         <TextBlock Text="{x:Static svc:AppStrings.BtnDeleteSelected}" VerticalAlignment="Center"/>
                     </StackPanel>
                 </Button>
+                <Button x:Name="BtnDedup" Style="{StaticResource ModernBtn}" Click="BtnDedup_Click" ToolTip="{x:Static svc:AppStrings.TooltipDedup}">
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <Path Data="M12,2A10,10 0 1,0 22,12A10,10 0 0,0 12,2M11,7H13V13H17V15H11V7M12,4A8,8 0 1,1 4,12A8,8 0 0,1 12,4Z"
+                              Fill="{DynamicResource BtnFg}"
+                              Width="14" Height="14"
+                              Stretch="Uniform"
+                              VerticalAlignment="Center"
+                              Margin="0,0,6,0"/>
+                        <TextBlock Text="{x:Static svc:AppStrings.BtnDedup}" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
                 <Button Style="{StaticResource ModernBtn}" Click="BtnImport_Click" ToolTip="{x:Static svc:AppStrings.TooltipImportList}">
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                         <Path Data="M11,4H4A2,2 0 0,0 2,6V20A2,2 0 0,0 4,22H18A2,2 0 0,0 20,20V13H18V20H4V6H11V4M19.5,6L18.09,7.41L15,4.33V14H13V4.33L9.91,7.41L8.5,6L14,0.5L19.5,6Z"
@@ -202,7 +213,7 @@
                         <TextBlock Text="{x:Static svc:AppStrings.BtnExportList}" VerticalAlignment="Center"/>
                     </StackPanel>
                 </Button>
-                <Button x:Name="BtnToggleTheme" Style="{StaticResource ModernBtn}" Click="BtnToggleTheme_Click" ToolTip="{x:Static svc:AppStrings.TooltipToggleTheme}">
+                <Button x:Name="BtnToggleTheme" Style="{StaticResource ModernBtn}" Click="BtnToggleTheme_Click" ToolTip="{x:Static svc:AppStrings.TooltipToggleTheme}" Visibility="Collapsed">
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                         <Path Data="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A3.5,3.5 0 0,0 15.5,18.5C15.5,18.16 15.38,17.84 15.17,17.58C14.96,17.33 14.83,17 14.83,16.67A1.67,1.67 0 0,1 16.5,15H18A4,4 0 0,0 22,11C22,6.03 17.5,2 12,2M12,4C16.41,4 20,7.13 20,11A2,2 0 0,1 18,13H16.5A3.67,3.67 0 0,0 12.83,16.67C12.83,17.39 13.15,18.05 13.66,18.53C13.84,18.78 13.5,19.34 13.5,18.5A1.5,1.5 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M6.5,10A1.5,1.5 0 0,0 5,11.5A1.5,1.5 0 0,0 6.5,13A1.5,1.5 0 0,0 8,11.5A1.5,1.5 0 0,0 6.5,10M9.5,6A1.5,1.5 0 0,0 8,7.5A1.5,1.5 0 0,0 9.5,9A1.5,1.5 0 0,0 11,7.5A1.5,1.5 0 0,0 9.5,6M14.5,6A1.5,1.5 0 0,0 13,7.5A1.5,1.5 0 0,0 14.5,9A1.5,1.5 0 0,0 16,7.5A1.5,1.5 0 0,0 14.5,6M17.5,10A1.5,1.5 0 0,0 16,11.5A1.5,1.5 0 0,0 17.5,13A1.5,1.5 0 0,0 19,11.5A1.5,1.5 0 0,0 17.5,10Z"
                               Fill="{DynamicResource BtnFg}"
@@ -256,8 +267,8 @@
                     <Button Content="{x:Static svc:AppStrings.BtnSaveHotKey}" Style="{StaticResource AccentBtn}" Padding="14,6" FontSize="13" Click="BtnSaveHotKey_Click" ToolTip="{x:Static svc:AppStrings.TooltipSaveHotKey}"/>
                 </StackPanel>
 
-                <!-- 右侧：外观主题风格下拉框 -->
-                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                <!-- 右侧：外观主题风格下拉框（已隐藏：主题改由主界面菜单切换，管理界面不再提供快速换主题） -->
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Visibility="Collapsed">
                     <TextBlock Text="🎨 主题风格:" FontSize="15" FontWeight="Bold" Foreground="{DynamicResource TextPrimary}" VerticalAlignment="Center" Margin="0,0,10,0"/>
                     <ComboBox x:Name="CmbThemes" Width="205" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center" SelectionChanged="CmbThemes_SelectionChanged" ToolTip="{x:Static svc:AppStrings.TooltipThemeCombo}">
                         <ComboBox.ItemTemplate>
@@ -289,6 +300,8 @@
                       AutoGenerateColumns="False"
                       CanUserAddRows="False"
                       IsReadOnly="True"
+                      EnableRowVirtualization="False"
+                      VirtualizingPanel.VirtualizationMode="Standard"
                       Background="Transparent"
                       BorderThickness="0"
                       Foreground="{DynamicResource TextPrimary}"
@@ -299,7 +312,8 @@
                       GridLinesVisibility="Horizontal"
                       HorizontalGridLinesBrush="{DynamicResource GridLine}"
                       SelectionMode="Single"
-                      SelectionChanged="ShortcutGrid_SelectionChanged">
+                      SelectionChanged="ShortcutGrid_SelectionChanged"
+                      PreviewMouseLeftButtonUp="ShortcutGrid_PreviewMouseLeftButtonUp">
 
             <!-- 自定义单元格样式: 避免原生蓝色覆盖 -->
             <DataGrid.CellStyle>

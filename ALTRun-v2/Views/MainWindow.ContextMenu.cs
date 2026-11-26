@@ -128,27 +128,52 @@ namespace ALTRun.Views
             menu.Items.Add(miEdit);
 
             // 3. 打开目标程序目录 (现代文件夹图标)
-            var miOpenDir = new MenuItem
+            // 计算器结果、终端命令、内置指令、网址搜索等没有"所在目录"，直接不显示该项
+            if (!IsSpecialCommandItem(item))
             {
-                Header = AppStrings.ContextOpenFolder,
-                Icon = CreateVectorIcon("M20,18H4V8H20M20,6H12L10,4H4C2.89,4 2,4.89 2,6V18A2,2 0 0,0 4,20H20A2,2 0 0,0 22,18V8C22,6.89 21.1,6 20,6Z", 12.5),
-                InputGestureText = "Ctrl+D",
-                Style = menuItemStyle
-            };
-            miOpenDir.Click += (s, ev) =>
-            {
-                OpenItemDirectory(item);
-            };
-            menu.Items.Add(miOpenDir);
+                var miOpenDir = new MenuItem
+                {
+                    Header = AppStrings.ContextOpenFolder,
+                    Icon = CreateVectorIcon("M20,18H4V8H20M20,6H12L10,4H4C2.89,4 2,4.89 2,6V18A2,2 0 0,0 4,20H20A2,2 0 0,0 22,18V8C22,6.89 21.1,6 20,6Z", 12.5),
+                    InputGestureText = "Ctrl+D",
+                    Style = menuItemStyle
+                };
+                miOpenDir.Click += (s, ev) =>
+                {
+                    OpenItemDirectory(item);
+                };
+                menu.Items.Add(miOpenDir);
+            }
 
             menu.PlacementTarget = targetElement;
             menu.Placement = System.Windows.Controls.Primitives.PlacementMode.MousePoint;
             menu.IsOpen = true;
         }
 
+        /// <summary>
+        /// 特殊命令项（计算/终端/内置指令/网址搜索/运行框）没有对应的文件夹，
+        /// 右键菜单与 Ctrl+D 都应跳过，避免弹出无意义的"无法打开目录"。
+        /// </summary>
+        internal static bool IsSpecialCommandItem(ShortCutItem? item)
+        {
+            string cmd = (item?.CommandLine ?? string.Empty).Trim();
+            if (cmd.StartsWith("@+") || cmd.StartsWith("@-")) cmd = cmd.Substring(2).TrimStart();
+            else if (cmd.StartsWith("@")) cmd = cmd.Substring(1).TrimStart();
+
+            return cmd.Length == 0 ||
+                   cmd.StartsWith("COPY:", StringComparison.OrdinalIgnoreCase) ||
+                   cmd.StartsWith("RUNCMD:", StringComparison.OrdinalIgnoreCase) ||
+                   cmd.StartsWith("win:", StringComparison.OrdinalIgnoreCase) ||
+                   cmd.StartsWith("sys:", StringComparison.OrdinalIgnoreCase) ||
+                   cmd.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                   cmd.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ||
+                   cmd.Equals("{%p}", StringComparison.OrdinalIgnoreCase) ||
+                   cmd.Equals("%p", StringComparison.OrdinalIgnoreCase);
+        }
+
         private void OpenItemDirectory(ShortCutItem item)
         {
-            if (item == null) return;
+            if (item == null || IsSpecialCommandItem(item)) return;
 
             string? dir = ResolveTargetDirectory(item);
             if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
@@ -299,6 +324,8 @@ namespace ALTRun.Views
                 if (item != null && item.DataContext is ShortCutItem shortcut)
                 {
                     ResultListBox.SelectedItem = shortcut;
+                    int idx = ResultListBox.Items.IndexOf(shortcut);
+                    if (idx >= 0) _selectedResultIndex = idx;
                     bool runAsAdmin = (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control;
                     ExecuteSelectedItem(runAsAdmin);
                     e.Handled = true;

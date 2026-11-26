@@ -23,6 +23,11 @@ namespace ALTRun.Views
         private TrayIconService? _trayIconService;
         private SearchResult _currentResult = new();
 
+        // 候选列表的“逻辑选中索引”。ListBox.SelectedIndex 会在窗口 Hide/Show、ItemsSource
+        // 重建或布局刷新时被 WPF 重置为 -1（尤其“运行一次后再次呼出”这条路径），
+        // 因此滚轮/上下键统一以本字段为唯一真相源，避免被视觉选中态干扰。
+        private int _selectedResultIndex = -1;
+
         // 搜索防抖：30ms 内的连续输入合并为一次搜索，避免每个字符都全量遍历并重建列表
         private readonly System.Windows.Threading.DispatcherTimer _searchDebounceTimer = new()
         {
@@ -132,15 +137,21 @@ namespace ALTRun.Views
                     SystemController.LastForegroundWindow = currentFg;
                 }
 
-                var workArea = SystemParameters.WorkArea;
-                Left = (workArea.Width - Width) / 2 + workArea.Left;
-                Top = Math.Max(workArea.Top + 20, Math.Min(workArea.Height * 0.22 + workArea.Top, workArea.Top + workArea.Height - Height - 20));
+                // 呼出位置跟随鼠标所在显示器（含 DPI 换算），不再固定在主屏
+                Rect workArea = WindowHelper.GetWorkAreaAtCursor(this);
+                double targetLeft = workArea.Left + (workArea.Width - Width) / 2;
+                double targetTop = workArea.Top + workArea.Height * 0.22;
+                Left = Math.Max(workArea.Left + 10, Math.Min(targetLeft, workArea.Left + workArea.Width - Width - 10));
+                Top = Math.Max(workArea.Top + 20, Math.Min(targetTop, workArea.Top + workArea.Height - Height - 20));
 
-                PerformSearch();
-                ResetListScrollToTop();
-
+                // 必须先 Show 再搜索：窗口处于 Hidden 时 ListBox 尚未进入可视树，
+                // 此时设置的 ItemsSource / SelectedIndex=0 会在 Show 后被布局重置为 -1。
+                // 结果就是“成功运行一次后再次呼出，未输入字符时滚轮始终停在第 1 项”。
                 Show();
                 WindowState = WindowState.Normal;
+
+                PerformSearch(); // 内部已调用 ResetListScrollToTop()，无需重复复位
+
                 Activate();
                 ForceForeground();
                 SearchBox.Focus();

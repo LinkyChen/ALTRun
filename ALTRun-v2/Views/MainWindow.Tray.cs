@@ -226,8 +226,12 @@ namespace ALTRun.Views
                 }
             }
 
+            // Popup 不在 Application.Windows 里，必须显式通知 MemoryTrimmer：
+            // 菜单打开期间即使主窗口隐藏也不能裁剪工作集。
+            menu.Opened += (s, e) => MemoryTrimmer.IsTrayMenuOpen = true;
             menu.Closed += (s, e) =>
             {
+                MemoryTrimmer.IsTrayMenuOpen = false;
                 _themeCloseTimer?.Stop();
                 _switchTimer?.Stop();
                 _pendingSwitchItem = null;
