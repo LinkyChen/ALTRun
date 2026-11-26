@@ -28,8 +28,8 @@ namespace ALTRun.Views
             WindowHelper.FitToWorkArea(this);
             InitVersionInfo();
             InitHotKeyControls();
-            var currentTheme = ThemeManager.GetTheme(App.Config.Settings.Theme, App.Config.Settings.DarkMode);
-            ApplyTheme(currentTheme);
+            // 主题统一在 Loaded 里应用一次：构造函数里再应用一次会重复创建约 30 个画刷、
+            // 重复调用 DWM 并提前强制创建窗口句柄，是打开偏慢的次要原因。
 
             Loaded += (s, e) =>
             {
@@ -53,8 +53,12 @@ namespace ALTRun.Views
 
             if (match != null)
             {
-                TxtFilter.Text = string.Empty;
-                RefreshGrid();
+                // TxtFilter.Text 赋空值本身就会触发 TextChanged → RefreshGrid，
+                // 无需在这里再显式刷新一次（重复重建 215 行 ItemsSource）。
+                if (!string.IsNullOrEmpty(TxtFilter.Text))
+                {
+                    TxtFilter.Text = string.Empty;
+                }
                 SelectItemByReference(match, focusEditor: true);
             }
         }
