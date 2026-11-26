@@ -115,4 +115,6 @@ ShortCutList.txt.bak
 # Local user configs
 ALTRun_Config.json
 publish/
-publish-*/
+publish-*/
+# Release archives (build artifacts, do not commit)
+*.zip
