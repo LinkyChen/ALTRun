@@ -63,6 +63,25 @@ namespace ALTRun.Services
         public const string HotKeyConflictTitle = "热键冲突";
 
         // ── 导入 / 导出 ───────────────────────────────────────
+        // ── 右键"发送到 ALTRun" ──────────────────────────────
+        public const string SendToReplaceTitle = "快捷方式已存在";
+        public const string SendToReplaceFormat = "快捷词 [{0}]（{1} = {2}）已存在，是否用新目标替换？";
+
+        // ── 右键"发送到 ALTRun"添加对话框（对齐老版 TShortCutForm）────────
+        public const string AddShortcutTitle = "ALTRun - 添加快捷方式";
+        public const string AddShortcutHeader = "添加快捷方式（可修改快捷词、名称与启动参数）";
+        public const string BtnBrowseFileShort = "浏览...";
+        public const string ParamTypeGroup = "启动参数";
+        public const string ParamTypeNone = "无参数启动";
+        public const string ParamTypeNoEncoding = "有参数启动（参数不编码）";
+        public const string ParamTypeUrlQuery = "有参数启动（URL 编码，如百度/谷歌搜索）";
+        public const string ParamTypeUtf8Query = "有参数启动（UTF-8 编码，如 Yahoo/MSN 搜索）";
+        public const string AddShortcutHint = "提示：命令行中的 %p 会被启动参数替换，%c 会被剪贴板文本替换。选“无参数启动”时运行时不会提示输入参数。";
+        public const string BtnOk = "确定";
+        public const string BtnCancel = "取消";
+        public const string SendToBlankLine = "快捷词和命令行不能为空，请检查后重试。";
+        public const string ParamTypeMismatch = "命令行中包含 %p 或 %c 占位符，但当前选择的是“无参数启动”。是否返回并改用“有参数启动”？";
+
         public const string ImportSuccessFormat = "成功导入 {0} 个快捷方式！";
         public const string ImportSelectedSuccessFormat = "成功导入 {0} 个软件快捷方式！\n现在您可以直接按唤醒热键 (Alt+R) 输入快捷词或软件名称快速启动了。";
         public const string ImportSelectedSuccessTitle = "导入成功";

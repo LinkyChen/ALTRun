@@ -1,4 +1,6 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Threading;
 using System.Windows;
 using ALTRun.Services;
@@ -10,6 +12,9 @@ namespace ALTRun
     {
         private const string MutexName = "Local\\ALTRun_V2_SingleInstance_Mutex";
         private const string WakeupEventName = "Local\\ALTRun_V2_Wakeup_Event";
+
+        // "发送到 ALTRun"传进来的文件路径（冷启动时使用；单实例时改走 FileSendMailbox）
+        private static string[] _startupAddFiles = Array.Empty<string>();
 
         private static Mutex? _mutex;
         private static bool _ownsMutex = false;
@@ -50,8 +55,9 @@ namespace ALTRun
                 args.Handled = true;
             };
 
-            // 检测是否为开机静默启动参数 (--silent 或 --autorun)
+            // 检测是否为开机静默启动参数 (--silent 或 --autorun)，并分离"发送到"传进来的文件路径
             bool isSilentStartup = false;
+            var addFiles = new List<string>();
             if (e.Args != null && e.Args.Length > 0)
             {
                 foreach (var arg in e.Args)
@@ -62,10 +68,14 @@ namespace ALTRun
                         string.Equals(arg, "/silent", StringComparison.OrdinalIgnoreCase))
                     {
                         isSilentStartup = true;
-                        break;
+                    }
+                    else if (!string.IsNullOrWhiteSpace(arg) && File.Exists(arg))
+                    {
+                        addFiles.Add(arg);
                     }
                 }
             }
+            _startupAddFiles = addFiles.ToArray();
 
             // 单实例检测与重复运行唤醒支持
             _mutex = new Mutex(true, MutexName, out bool createdNew);
@@ -76,6 +86,11 @@ namespace ALTRun
                 {
                     try
                     {
+                        // "发送到 ALTRun"的文件路径先落到信箱，再唤醒主实例去取
+                        if (_startupAddFiles.Length > 0)
+                        {
+                            FileSendMailbox.Append(_startupAddFiles);
+                        }
                         if (EventWaitHandle.TryOpenExisting(WakeupEventName, out var existingEvent))
                         {
                             existingEvent.Set();
@@ -111,6 +126,13 @@ namespace ALTRun
                             if (Current.MainWindow is MainWindow mainWin)
                             {
                                 mainWin.ShowAndActivate();
+
+                                // 处理"发送到 ALTRun"信箱里的文件路径
+                                var files = FileSendMailbox.TakeAll();
+                                if (files.Count > 0)
+                                {
+                                    mainWin.AddFilesAsShortcuts(files, confirmReplace: true);
+                                }
                             }
                         });
                     }
@@ -152,6 +174,17 @@ namespace ALTRun
             {
                 var wizard = new WelcomeWizardWindow();
                 wizard.ShowDialog();
+            }
+
+            // 冷启动时"发送到 ALTRun"带来的文件：等主窗口 Loaded 后再添加，
+            // 避免窗口句柄未就绪时弹确认框出问题。
+            if (_startupAddFiles.Length > 0 && !isSilentStartup)
+            {
+                var startupFiles = _startupAddFiles;
+                mainWindow.Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    mainWindow.AddFilesAsShortcuts(startupFiles, confirmReplace: true);
+                }), System.Windows.Threading.DispatcherPriority.Normal);
             }
 
             // 后台静默检测 GitHub Releases 更新（延迟 10 秒启动，完全不影响开机极速响应）

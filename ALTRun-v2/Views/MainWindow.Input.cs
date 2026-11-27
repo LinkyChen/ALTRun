@@ -235,6 +235,24 @@ namespace ALTRun.Views
 
             if (e.Data.GetData(System.Windows.DataFormats.FileDrop) is not string[] files || files.Length == 0) return;
 
+            // 拖放场景保持原有行为：重复目标只提升频次（不弹替换确认）
+            AddFilesAsShortcuts(files, confirmReplace: false);
+        }
+
+        /// <summary>
+        /// 把外部文件（拖放 / 右键"发送到 ALTRun"）添加为快捷项。
+        /// </summary>
+        /// <param name="files">文件路径列表。</param>
+        /// <param name="confirmReplace">
+        /// true = "发送到"场景：弹 WPF 添加对话框让用户修改快捷词/名称/参数类型，
+        ///        确定后按快捷词判断是否替换已有项（对齐老版 TShortCutForm 交互）；
+        /// false = 拖放场景：静默添加，重复目标只提升频次，不弹窗。
+        /// </param>
+        public void AddFilesAsShortcuts(IEnumerable<string> files, bool confirmReplace)
+        {
+            var fileList = files.Where(f => !string.IsNullOrWhiteSpace(f) && File.Exists(f)).ToList();
+            if (fileList.Count == 0) return;
+
             var shortcuts = App.Config.Settings.ShortCuts;
             var usedKeys = new HashSet<string>(
                 shortcuts.Where(s => !string.IsNullOrWhiteSpace(s.ShortCut)).Select(s => s.ShortCut),
@@ -243,7 +261,8 @@ namespace ALTRun.Views
                 shortcuts.Select(s => NormalizeDropPath(s.CommandLine)),
                 StringComparer.OrdinalIgnoreCase);
 
-            foreach (var file in files)
+            bool anyAdded = false;
+            foreach (var file in fileList)
             {
                 string fileName = Path.GetFileName(file);
                 if (fileName.Equals("ShortCutList.txt", StringComparison.OrdinalIgnoreCase) ||
@@ -260,15 +279,66 @@ namespace ALTRun.Views
                             if (!string.IsNullOrWhiteSpace(item.ShortCut)) usedKeys.Add(item.ShortCut);
                             App.Config.RefreshPinyinCache(item);
                         }
-                        App.Config.Save();
-                        PerformSearch();
+                        anyAdded = true;
                         MessageBox.Show(string.Format(AppStrings.ImportSuccessFormat, imported.Count), AppStrings.AppName, MessageBoxButton.OK, MessageBoxImage.Information);
                     }
                     continue;
                 }
 
-                // 重复拖入同一目标时只提升频次，不再新增条目
                 string normalized = NormalizeDropPath(file);
+                string baseName = Path.GetFileNameWithoutExtension(file);
+
+                if (confirmReplace)
+                {
+                    // 对齐老版：先弹出添加窗口，预填智能快捷词/名称/命令行，用户点确定后才写入
+                    string suggestedKey = AppScannerService.GenerateSmartShortcut(baseName, usedKeys);
+                    var dialog = new AddShortcutWindow(suggestedKey, baseName, file, ParamType.ptNone);
+                    if (dialog.ShowDialog() != true) continue;
+
+                    string key = dialog.ResultShortCut;
+                    string name = dialog.ResultName;
+                    string command = dialog.ResultCommandLine;
+                    ParamType paramType = dialog.ResultParamType;
+
+                    // 老版按"快捷词"判断重复（GetShortCutItemByShortCut），不是按目标路径
+                    var existing = shortcuts.FirstOrDefault(
+                        s => string.Equals(s.ShortCut, key, StringComparison.OrdinalIgnoreCase));
+                    if (existing != null)
+                    {
+                        string body = string.Format(AppStrings.SendToReplaceFormat,
+                            existing.ShortCut, existing.Name, existing.CommandLine);
+                        // 不带 owner：冷启动时主窗口隐藏在托盘，以隐藏窗口为 owner 弹窗可能不置顶
+                        var answer = MessageBox.Show(body, AppStrings.SendToReplaceTitle,
+                            MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
+                        if (answer != MessageBoxResult.Yes) continue; // 否：保留原项
+
+                        existing.Name = name;
+                        existing.CommandLine = command;
+                        existing.ParamType = paramType;
+                        existing.Freq = 0;
+                        App.Config.RefreshPinyinCache(existing);
+                        anyAdded = true;
+                        AppLog.Write($"[SendTo] 替换已有快捷项: {key} -> {command}");
+                        continue;
+                    }
+
+                    var added = new ShortCutItem
+                    {
+                        ShortCut = key,
+                        Name = name,
+                        CommandLine = command,
+                        ParamType = paramType,
+                        Freq = 0
+                    };
+                    App.Config.RefreshPinyinCache(added);
+                    shortcuts.Insert(0, added);
+                    usedKeys.Add(key);
+                    anyAdded = true;
+                    AppLog.Write($"[SendTo] 新增快捷项: {key} -> {command}");
+                    continue;
+                }
+
+                // 拖放场景保持原有静默行为
                 if (!usedPaths.Add(normalized))
                 {
                     var duplicate = shortcuts.FirstOrDefault(s => string.Equals(NormalizeDropPath(s.CommandLine), normalized, StringComparison.OrdinalIgnoreCase));
@@ -276,10 +346,7 @@ namespace ALTRun.Views
                     continue;
                 }
 
-                string baseName = Path.GetFileNameWithoutExtension(file);
-                // 复用扫描器的智能快捷词（含中文拼音首字母与冲突递增），不再简单取前 4 个字符
                 string shortCutKey = AppScannerService.GenerateSmartShortcut(baseName, usedKeys);
-
                 var newItem = new ShortCutItem
                 {
                     ShortCut = shortCutKey,
@@ -289,10 +356,14 @@ namespace ALTRun.Views
                 };
                 App.Config.RefreshPinyinCache(newItem);
                 shortcuts.Insert(0, newItem);
+                anyAdded = true;
             }
 
-            App.Config.Save();
-            PerformSearch();
+            if (anyAdded)
+            {
+                App.Config.Save();
+                PerformSearch();
+            }
         }
 
     }
