@@ -12,6 +12,30 @@ namespace ALTRun.Services
         public static string StartupShortcutPath =>
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup), $"{AppName}.lnk");
 
+        /// <summary>
+        /// 开机静默启动的关键：历史上启动文件夹里可能存在 ALTRun.lnk / ALTRun.exe.lnk 等
+        /// 无 --silent 参数的旧快捷方式。它们开机时会再拉起一个实例，触发单实例唤醒事件，
+        /// 把已经静默驻留托盘的主界面弹出来。这里统一按文件名前缀清理所有 ALTRun*.lnk。
+        /// </summary>
+        private static void CleanLegacyStartupShortcuts()
+        {
+            try
+            {
+                string startupFolder = Environment.GetFolderPath(Environment.SpecialFolder.Startup);
+                if (string.IsNullOrEmpty(startupFolder) || !Directory.Exists(startupFolder)) return;
+
+                foreach (string lnk in Directory.GetFiles(startupFolder, $"{AppName}*.lnk"))
+                {
+                    File.Delete(lnk);
+                    AppLog.Write($"[ALTRun] 已清理开机自启动残留快捷方式: {lnk}");
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write($"[ALTRun] AutoRunService.CleanLegacy 静默异常: {ex.Message}");
+            }
+        }
+
         public static void ApplyAutoRun(bool enable)
         {
             string exePath = Environment.ProcessPath ?? "";
@@ -50,19 +74,9 @@ namespace ALTRun.Services
             }
 
             // 2. 清理历史遗留的 Windows 用户启动文件夹 (shell:startup) 快捷方式
-            // 避免注册表与启动文件夹同时存在造成双重自启动冲突
-            try
-            {
-                string shortcutPath = StartupShortcutPath;
-                if (File.Exists(shortcutPath))
-                {
-                    File.Delete(shortcutPath);
-                }
-            }
-            catch (Exception ex)
-            {
-                AppLog.Write($"[ALTRun] AutoRunService.cs:52 静默异常: {ex.Message}");
-            }
+            // 避免注册表与启动文件夹同时存在造成双重自启动冲突，也避免无 --silent 参数的
+            // 旧 lnk 开机拉起第二实例、唤醒并弹出静默驻留的主界面。
+            CleanLegacyStartupShortcuts();
         }
 
         public static bool CheckStatus()

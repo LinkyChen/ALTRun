@@ -13,6 +13,8 @@ namespace ALTRun.Services
         public const string MsgBoxTitleHint = "提示";
         public const string MsgBoxTitleError = "错误";
         public const string OkButton = "确定";
+        public const string YesButton = "是";
+        public const string NoButton = "否";
 
         // ── 托盘菜单 ──────────────────────────────────────────
         public const string MenuShowSearchFormat = "显示搜索框 ({0})";
@@ -26,6 +28,7 @@ namespace ALTRun.Services
         public const string MenuExit = "退出 ALTRun";
         public const string ContextAddNew = "添加新条目";
         public const string ContextEdit = "编辑本条目";
+        public const string ContextDelete = "删除本条目";
         public const string ContextOpenFolder = "打开目标程序目录";
 
         // ── 更新检查 ──────────────────────────────────────────
@@ -61,6 +64,12 @@ namespace ALTRun.Services
         public const string HotKeyUpdatedTitle = "设置成功";
         public const string HotKeyConflict = "热键注册失败！该按键组合可能已被系统或其他运行中的软件占用，请尝试其他组合（例如 Alt+Space 或 Ctrl+Shift+Space）。";
         public const string HotKeyConflictTitle = "热键冲突";
+
+        // ── 新建项未保存提示 ──────────────────────────────────
+        public const string SaveNewItemTitle = "保存新建项";
+        public const string SaveNewItemMessage = "当前新建项尚未保存，是否保存后继续新建？";
+        public const string SaveNewItemSave = "保存";
+        public const string SaveNewItemCancel = "取消";
 
         // ── 导入 / 导出 ───────────────────────────────────────
         // ── 右键"发送到 ALTRun" ──────────────────────────────
@@ -112,7 +121,13 @@ namespace ALTRun.Services
             $"ALTRun v{typeof(AppStrings).Assembly.GetName().Version?.ToString(3) ?? "2.0"} - 快速启动 ({{0}})";
 
         // ── 文件未找到 ────────────────────────────────────────
-        public const string FileNotFound = "未找到该文件，请检查";
+        public const string FileNotFound = "未找到该条目，删除or检查？";
+        public const string DeleteItemButton = "删除";
+        public const string CheckItemButton = "检查";
+        public const string DeleteItemTitle = "确认删除条目";
+        /// <summary>删除确认窗口正文：快捷词 {0} / 名称 {1} / 命令行 {2}</summary>
+        public const string DeleteItemBodyFormat = "快捷词: {0}\n名　称: {1}\n命令行: {2}\n\n确定要删除该条目吗？";
+        public const string ItemDeleted = "该条目已删除";
 
         // ── 危险系统指令的二次确认 ────────────────────────────
         public const string CloseAllConfirmTitle = "确认关闭全部窗口";
@@ -176,7 +191,8 @@ namespace ALTRun.Services
         public const string GridHeaderCommandLine = "命令行 / 目标路径";
         public const string GridHeaderFreq = "频次";
         public const string LabelShortCut = "快捷词:";
-        public const string LabelName = "名 称:";
+        // 用全角空格补齐为 3 个字符宽，与"快捷词"等宽，保证冒号上下对齐
+        public const string LabelName = "名　称:";
         public const string LabelCommandLine = "命令行:";
         public const string BtnBrowseFile = "📄 选择文件...";
         public const string BtnBrowseFolder = "📁 选择目录...";

@@ -21,6 +21,10 @@ namespace ALTRun.Views
         private ObservableCollection<ShortCutItem> _viewList = new();
         private ShortCutItem? _selectedItem;
 
+        // 通过“新建项”生成、但尚未点“保存修改”确认的占位项。
+        // 再次点“新建项”时据此弹“是否保存新建项”提示；点保存修改或删除后清空。
+        private ShortCutItem? _pendingNewItem;
+
         public ManageWindow(ShortCutItem? itemToEdit = null, bool addNew = false)
         {
             InitializeComponent();
@@ -42,6 +46,17 @@ namespace ALTRun.Views
                 else if (itemToEdit != null)
                 {
                     SelectAndFocusItem(itemToEdit);
+                }
+            };
+
+            // Esc 关闭管理中心：用冒泡阶段 KeyDown，让 ComboBox 下拉等子控件
+            // 先用 Esc 关闭自身弹层；子控件未处理时再由窗口关闭。
+            KeyDown += (s, e) =>
+            {
+                if (e.Key == Key.Escape)
+                {
+                    Close();
+                    e.Handled = true;
                 }
             };
         }
@@ -149,14 +164,16 @@ namespace ALTRun.Views
 
             if (modifiers == KeyModifiers.None)
             {
-                WpfMessageBox.Show(AppStrings.HotKeyNeedModifier, AppStrings.MsgBoxTitleHint, MessageBoxButton.OK, MessageBoxImage.Warning);
+                ConfirmDialogWindow.Confirm(this, AppStrings.MsgBoxTitleHint, AppStrings.HotKeyNeedModifier,
+                    AppStrings.OkButton, string.Empty, focusSecondary: false);
                 return;
             }
 
             string? selectedKeyStr = CmbKey.SelectedItem as string;
             if (string.IsNullOrEmpty(selectedKeyStr))
             {
-                WpfMessageBox.Show(AppStrings.HotKeyNeedMainKey, AppStrings.MsgBoxTitleHint, MessageBoxButton.OK, MessageBoxImage.Warning);
+                ConfirmDialogWindow.Confirm(this, AppStrings.MsgBoxTitleHint, AppStrings.HotKeyNeedMainKey,
+                    AppStrings.OkButton, string.Empty, focusSecondary: false);
                 return;
             }
 
@@ -176,11 +193,14 @@ namespace ALTRun.Views
                 if (success)
                 {
                     string hotkeyText = MainWindow.FormatHotKeyText(modifiers, key);
-                    WpfMessageBox.Show(string.Format(AppStrings.HotKeyUpdatedFormat, hotkeyText), AppStrings.HotKeyUpdatedTitle, MessageBoxButton.OK, MessageBoxImage.Information);
+                    ConfirmDialogWindow.Confirm(this, AppStrings.HotKeyUpdatedTitle,
+                        string.Format(AppStrings.HotKeyUpdatedFormat, hotkeyText),
+                        AppStrings.OkButton, string.Empty, focusSecondary: false);
                 }
                 else
                 {
-                    WpfMessageBox.Show(AppStrings.HotKeyConflict, AppStrings.HotKeyConflictTitle, MessageBoxButton.OK, MessageBoxImage.Warning);
+                    ConfirmDialogWindow.Confirm(this, AppStrings.HotKeyConflictTitle, AppStrings.HotKeyConflict,
+                        AppStrings.OkButton, string.Empty, focusSecondary: false);
                 }
             }
         }
@@ -395,6 +415,13 @@ namespace ALTRun.Views
 
         private void ApplySelection(ShortCutItem? item)
         {
+            // 用户改选其它行（含清空/删除）后，原先"新建未保存"的占位项已不在编辑状态，
+            // 清除挂起标记，避免下次点"新建项"把别的行内容误写回它。
+            if (_pendingNewItem != null && !ReferenceEquals(item, _pendingNewItem))
+            {
+                _pendingNewItem = null;
+            }
+
             _selectedItem = item;
             EditShortCut.Text = item?.ShortCut ?? string.Empty;
             EditName.Text = item?.Name ?? string.Empty;
@@ -488,7 +515,14 @@ namespace ALTRun.Views
                 AppLog.Write($"[ManageSel] 保存后 selectedItems={ShortcutGrid.SelectedItems.Count} " +
                              $"gridSelectedItem={(ShortcutGrid.SelectedItem as ShortCutItem)?.ShortCut}");
 
-                WpfMessageBox.Show(AppStrings.SavedMessage, AppStrings.AppName, MessageBoxButton.OK, MessageBoxImage.Information);
+                // 该项已通过“保存修改”确认，清除新建挂起标记
+                if (ReferenceEquals(_selectedItem, _pendingNewItem))
+                {
+                    _pendingNewItem = null;
+                }
+
+                ConfirmDialogWindow.Confirm(this, AppStrings.AppName, AppStrings.SavedMessage,
+                    AppStrings.OkButton, string.Empty, focusSecondary: false);
             }
             else
             {
@@ -507,7 +541,8 @@ namespace ALTRun.Views
                     App.Config.Save();
                     RefreshGrid(TxtFilter.Text);
                     SelectItemByReference(newItem);
-                    WpfMessageBox.Show(AppStrings.AddedMessage, AppStrings.AppName, MessageBoxButton.OK, MessageBoxImage.Information);
+                    ConfirmDialogWindow.Confirm(this, AppStrings.AppName, AppStrings.AddedMessage,
+                        AppStrings.OkButton, string.Empty, focusSecondary: false);
                 }
             }
         }
@@ -519,6 +554,34 @@ namespace ALTRun.Views
 
         private void BtnAdd_Click(object sender, RoutedEventArgs e)
         {
+            // 若上一次“新建项”尚未点“保存修改”确认，先询问是否保存。
+            // 左“保存”聚焦且为深色主按钮，右“取消”浅色（focusSecondary: false）。
+            if (_pendingNewItem != null)
+            {
+                bool save = ConfirmDialogWindow.Confirm(
+                    this,
+                    AppStrings.SaveNewItemTitle,
+                    AppStrings.SaveNewItemMessage,
+                    AppStrings.SaveNewItemSave,
+                    AppStrings.SaveNewItemCancel,
+                    focusSecondary: false);
+
+                if (save)
+                {
+                    // 保存：把当前 3 个文本框内容写回挂起的新建项并持久化
+                    _pendingNewItem.ShortCut = EditShortCut.Text.Trim();
+                    _pendingNewItem.Name = EditName.Text.Trim();
+                    _pendingNewItem.CommandLine = EditCommandLine.Text.Trim();
+                    App.Config.RefreshPinyinCache(_pendingNewItem);
+                    App.Config.Save();
+                }
+                else
+                {
+                    // 取消：取消本次新建，不生成新项，停留在当前编辑状态
+                    return;
+                }
+            }
+
             var newItem = new ShortCutItem
             {
                 ShortCut = "new",
@@ -533,6 +596,7 @@ namespace ALTRun.Views
             RefreshGrid(TxtFilter.Text);
 
             SelectItemByReference(newItem, focusEditor: true);
+            _pendingNewItem = newItem;
         }
 
         private void BtnScanApps_Click(object sender, RoutedEventArgs e)
@@ -555,12 +619,92 @@ namespace ALTRun.Views
             var item = _selectedItem;
             if (item != null && _viewList.Any(x => ReferenceEquals(x, item)))
             {
-                if (WpfMessageBox.Show(string.Format(AppStrings.DeleteConfirmFormat, item.Name), AppStrings.DeleteConfirmTitle, MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+                ConfirmAndDeleteItem(item);
+            }
+        }
+
+        /// <summary>
+        /// 管理中心删除条目：复用主界面同一套确认窗口（快捷词/名称/命令行 + 删除/取消），
+        /// 供顶部“删除选中”按钮与列表右键菜单共用。确认后按 Id 定位并移除原始配置项，
+        /// 刷新拼音缓存、持久化并重建列表。
+        /// </summary>
+        private void ConfirmAndDeleteItem(ShortCutItem item)
+        {
+            if (item == null) return;
+            if (!DeleteConfirmWindow.Confirm(item, this)) return;
+
+            var all = App.Config.Settings.ShortCuts;
+            var original = all.FirstOrDefault(x => x.Id == item.Id) ?? item;
+            all.Remove(original);
+            App.Config.RefreshPinyinCache();
+            App.Config.Save();
+
+            // 删除后清空可能指向已删项的编辑框与选中态，再重建列表
+            _selectedItem = null;
+            RefreshGrid(TxtFilter.Text);
+        }
+
+        /// <summary>
+        /// 构建与主界面候选项右键菜单第 3 项“删除本条目”完全一致的矢量图标：
+        /// 20×20 圆角 BadgeBgBrush 底 + AccentBrush 填充的垃圾桶 Path。
+        /// </summary>
+        private UIElement CreateDeleteIcon()
+        {
+            var path = new System.Windows.Shapes.Path
+            {
+                Data = Geometry.Parse("M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19M8,9H16V19H8V9M9,11V17H11V11H9M13,11V17H15V11H13Z"),
+                Fill = (System.Windows.Media.Brush)FindResource("AccentBrush"),
+                Width = 12,
+                Height = 12,
+                Stretch = Stretch.Uniform,
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Center
+            };
+            return new Border
+            {
+                Width = 20,
+                Height = 20,
+                CornerRadius = new CornerRadius(4),
+                Background = (System.Windows.Media.Brush)FindResource("BadgeBgBrush"),
+                Child = path
+            };
+        }
+
+        /// <summary>
+        /// 列表右键：先按引用选中被点中的行（复用左键的选中路径，避免 DataGrid 残留选中），
+        /// 再弹出右键菜单。菜单里的“删除本条目”走与顶部按钮相同的确认流程。
+        /// </summary>
+        private void ShortcutGrid_PreviewMouseRightButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            DependencyObject? dep = e.OriginalSource as DependencyObject;
+            while (dep != null && dep is not DataGridRow)
+            {
+                dep = VisualTreeHelper.GetParent(dep);
+            }
+
+            if (dep is DataGridRow row && row.DataContext is ShortCutItem item)
+            {
+                int idx = IndexOfReference(item);
+                if (idx < 0) return;
+
+                ShortcutGrid.UnselectAll();
+                ShortcutGrid.SelectedIndex = idx;
+                ClearStaleRowVisual(item);
+                ApplySelection(item);
+
+                var menu = new ContextMenu();
+                var miDelete = new MenuItem
                 {
-                    App.Config.Settings.ShortCuts.Remove(item);
-                    App.Config.Save();
-                    RefreshGrid(TxtFilter.Text);
-                }
+                    Header = AppStrings.ContextDelete,
+                    Icon = CreateDeleteIcon()
+                };
+                miDelete.Click += (_, _) => ConfirmAndDeleteItem(item);
+                menu.Items.Add(miDelete);
+
+                menu.PlacementTarget = row;
+                menu.Placement = System.Windows.Controls.Primitives.PlacementMode.MousePoint;
+                menu.IsOpen = true;
+                e.Handled = true;
             }
         }
 
@@ -582,8 +726,8 @@ namespace ALTRun.Views
 
             if (groups.Count == 0)
             {
-                WpfMessageBox.Show(AppStrings.DedupNoDuplicateBody, AppStrings.DedupNoDuplicate,
-                    MessageBoxButton.OK, MessageBoxImage.Information);
+                ConfirmDialogWindow.Confirm(this, AppStrings.DedupNoDuplicate,
+                    AppStrings.DedupNoDuplicateBody, AppStrings.OkButton, string.Empty, focusSecondary: false);
                 return;
             }
 
@@ -624,12 +768,10 @@ namespace ALTRun.Views
                 if (target.Length > 60) target = target.Substring(0, 60) + "…";
                 sb.AppendLine(string.Format(AppStrings.DedupMergeLine, target, plan.MergedShortCut, plan.Master.Freq));
             }
-            sb.AppendLine();
-            sb.Append(AppStrings.DedupConfirmYes + " / " + AppStrings.DedupConfirmNo + "?");
-
-            var result = WpfMessageBox.Show(this, sb.ToString(), AppStrings.DedupConfirmTitle,
-                MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
-            if (result != MessageBoxResult.Yes) return;
+            // 按钮文案已放在窗口底部，正文不再重复"确认合并 / 取消?"提示
+            var confirmed = ConfirmDialogWindow.Confirm(this, AppStrings.DedupConfirmTitle,
+                sb.ToString(), AppStrings.DedupConfirmYes, AppStrings.DedupConfirmNo, focusSecondary: false);
+            if (!confirmed) return;
 
             // 4. 执行合并：主项快捷词更新为合并串，Freq 取组内最大；删除其余重复项
             var toRemove = new HashSet<ShortCutItem>();
@@ -652,8 +794,9 @@ namespace ALTRun.Views
             App.Config.Save();
             RefreshGrid(TxtFilter.Text);
 
-            WpfMessageBox.Show(this, string.Format(AppStrings.DedupDoneFormat, plans.Count, totalRemoved),
-                AppStrings.DedupDoneTitle, MessageBoxButton.OK, MessageBoxImage.Information);
+            ConfirmDialogWindow.Confirm(this, AppStrings.DedupDoneTitle,
+                string.Format(AppStrings.DedupDoneFormat, plans.Count, totalRemoved),
+                AppStrings.OkButton, string.Empty, focusSecondary: false);
         }
 
         /// <summary>目标路径归一化：去首尾空白、统一大小写由调用方 GroupBy 比较器处理。</summary>
@@ -754,8 +897,10 @@ namespace ALTRun.Views
                 {
                     string msg = string.Format(AppStrings.UpdateNewVersionBodyFormat, info.CurrentVersion, info.LatestVersion);
 
-                    var result = WpfMessageBox.Show(this, msg, AppStrings.UpdateTitleSoftware, MessageBoxButton.YesNo, MessageBoxImage.Information);
-                    if (result == MessageBoxResult.Yes)
+                    // 右"否"按钮默认聚焦：空格/回车/Esc/鼠标点击都能取消，避免误开链接
+                    bool open = ConfirmDialogWindow.Confirm(this, AppStrings.UpdateTitleSoftware,
+                        msg, AppStrings.YesButton, AppStrings.NoButton, focusSecondary: true, swapButtonColors: true);
+                    if (open)
                     {
                         UpdateCheckerService.OpenUrl(info.ReleaseUrl);
                     }
@@ -769,8 +914,10 @@ namespace ALTRun.Views
                     string msg = string.Format(AppStrings.UpdateLatestWithNoticeBodyFormat,
                         info.CurrentVersion, UpdateCheckerService.RepoUrl, statusDesc);
 
-                    var result = WpfMessageBox.Show(this, msg, AppStrings.UpdateTitleVersion, MessageBoxButton.YesNo, MessageBoxImage.Information);
-                    if (result == MessageBoxResult.Yes)
+                    // 右"否"按钮默认聚焦：空格/回车/Esc/鼠标点击都能取消，避免误开链接
+                    bool open = ConfirmDialogWindow.Confirm(this, AppStrings.UpdateTitleVersion,
+                        msg, AppStrings.YesButton, AppStrings.NoButton, focusSecondary: true, swapButtonColors: true);
+                    if (open)
                     {
                         UpdateCheckerService.OpenUrl(UpdateCheckerService.RepoUrl);
                     }
@@ -778,7 +925,8 @@ namespace ALTRun.Views
             }
             catch (Exception ex)
             {
-                WpfMessageBox.Show(this, AppStrings.UpdateErrorPrefix + ex.Message, AppStrings.MsgBoxTitleHint, MessageBoxButton.OK, MessageBoxImage.Warning);
+                ConfirmDialogWindow.Confirm(this, AppStrings.MsgBoxTitleHint,
+                    AppStrings.UpdateErrorPrefix + ex.Message, AppStrings.OkButton, string.Empty, focusSecondary: false);
             }
             finally
             {

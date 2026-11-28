@@ -165,7 +165,7 @@ namespace ALTRun.Views
                 }
                 else if (!string.IsNullOrEmpty(errorMessage))
                 {
-                    ShowMissingFileTip(errorMessage);
+                    ShowMissingFileTip(errorMessage, item);
                 }
             }
         }

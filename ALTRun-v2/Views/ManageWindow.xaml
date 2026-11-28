@@ -314,7 +314,8 @@
                       HorizontalGridLinesBrush="{DynamicResource GridLine}"
                       SelectionMode="Single"
                       SelectionChanged="ShortcutGrid_SelectionChanged"
-                      PreviewMouseLeftButtonUp="ShortcutGrid_PreviewMouseLeftButtonUp">
+                      PreviewMouseLeftButtonUp="ShortcutGrid_PreviewMouseLeftButtonUp"
+                      PreviewMouseRightButtonUp="ShortcutGrid_PreviewMouseRightButtonUp">
 
             <!-- 自定义单元格样式: 避免原生蓝色覆盖 -->
             <DataGrid.CellStyle>

@@ -127,7 +127,17 @@ namespace ALTRun.Views
             };
             menu.Items.Add(miEdit);
 
-            // 3. 打开目标程序目录 (现代文件夹图标)
+            // 3. 删除本条目（文字前带 — 符号）：弹出二次确认窗口后删除，与“未找到该条目→删除”共用同一流程
+            var miDelete = new MenuItem
+            {
+                Header = AppStrings.ContextDelete,
+                Icon = CreateVectorIcon("M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19M8,9H16V19H8V9M9,11V17H11V11H9M13,11V17H15V11H13Z", 12),
+                Style = menuItemStyle
+            };
+            miDelete.Click += (s, ev) => ConfirmAndDeleteItem(item);
+            menu.Items.Add(miDelete);
+
+            // 4. 打开目标程序目录 (现代文件夹图标)
             // 计算器结果、终端命令、内置指令、网址搜索等没有"所在目录"，直接不显示该项
             if (!IsSpecialCommandItem(item))
             {
